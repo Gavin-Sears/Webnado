@@ -1,54 +1,53 @@
-async function init() {
-  const canvas = document.getElementById('gpu-canvas') as HTMLCanvasElement;
-  if (!navigator.gpu) {
-    alert('WebGPU is not supported in this browser. Please use Chrome/Edge with WebGPU enabled.');
-    return;
-  }
+import GUI from 'lil-gui';
 
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) {
-    console.error('Failed to get WebGPU adapter.');
-    return;
-  }
-  const device = await adapter.requestDevice();
+// import { initWebGPU, showFatalError } from './renderer';
+// replace below with above after adding new logic
+import { context, device, initWebGPU, Renderer, showFatalError } from './renderer';
+// import { VolumetricRenderer } from './renderers/volumetric';
+import { resolutionName, resolutions } from './shaders/shaders';
 
-  device.lost.then((info) => {
-    console.error(`WebGPU device lost (${info.reason}): ${info.message}`);
-  });
+import { Stage } from './stage/stage';
 
-  const context = canvas.getContext('webgpu') as GPUCanvasContext;
-  const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: 'opaque' });
+async function start() {
+    await initWebGPU();
 
-  // Keep the drawing buffer matched to the canvas's on-screen size
-  const resizeObserver = new ResizeObserver(() => {
-    const dpr = window.devicePixelRatio || 1;
-    const maxDim = device.limits.maxTextureDimension2D;
-    canvas.width = Math.max(1, Math.min(Math.floor(canvas.clientWidth * dpr), maxDim));
-    canvas.height = Math.max(1, Math.min(Math.floor(canvas.clientHeight * dpr), maxDim));
-  });
-  resizeObserver.observe(canvas);
+    const stage = await Stage.create();
+    // const renderer = new VolumetricRenderer(stage);
+    new ClearRenderer(stage);
 
-  console.log('WebGPU successfully initialized! Device:', device);
+    const gui = new GUI();
 
-  function frame() {
-    const commandEncoder = device.createCommandEncoder();
-    const textureView = context.getCurrentTexture().createView();
-
-    const renderPass = commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: textureView,
-        clearValue: { r: 0.02, g: 0.03, b: 0.06, a: 1.0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      }],
+    // When we change sim resolution, just reload page.
+    // Deleting and re-creating all the buffers is something we can add later.
+    gui.add({ resolution: resolutionName }, 'resolution', Object.keys(resolutions)).onChange((resolution: string) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('res', resolution);
+        window.location.href = url.href;
     });
-    renderPass.end();
 
-    device.queue.submit([commandEncoder.finish()]);
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
+    // stage.weather.buildGui(gui);
+    // stage.gis.buildGui(gui);
+    // stage.solver.buildGui(gui);
+    // renderer.buildGui(gui);
 }
 
-init();
+// Temporary clear screen renderer
+class ClearRenderer extends Renderer {
+    protected override draw() {
+        const encoder = device.createCommandEncoder();
+        encoder.beginRenderPass({
+            colorAttachments: [{
+                view: context.getCurrentTexture().createView(),
+                clearValue: [0.32, 0.42, 0.58, 1],
+                loadOp: "clear",
+                storeOp: "store"
+            }]
+        }).end();
+        device.queue.submit([encoder.finish()]);
+    }
+}
+
+start().catch((error) => {
+    console.error(error);
+    showFatalError(`Webnado couldn't start: ${error}`);
+});

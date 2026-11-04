@@ -1,18 +1,23 @@
 {
-  "name": "cis5650-final",
+  "name": "webnado",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Real-time WebGPU implementation of Cyclogenesis with live Cesium terrain and NOAA weather data.",
+  "description": "Real-time WebGPU implementation of Cyclogenesis with Three.js tiles and live weather data.",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --open",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/three": "0.187.0",
     "@webgpu/types": "^0.1.74",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "lil-gui": "0.21.0",
+    "three": "0.187.0"
   }
 }
