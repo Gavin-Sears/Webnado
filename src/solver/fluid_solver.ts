@@ -4,14 +4,20 @@ import { device, profiler } from '../renderer';
 import { constants, processShaderRaw } from '../shaders/shaders';
 import { Fields, PingPong } from '../stage/fields';
 import { WeatherData } from '../weather/noaa_loader';
+import { DivergenceCheck, type DivergenceReport } from './divergence_check';
 
 import commonSource from './common.wgsl?raw';
 import boundarySource from './boundaries.wgsl?raw';
 import projectionSource from './projection.wgsl?raw';
+import transportSource from './transport.wgsl?raw';
+import forceSource from './forces.wgsl?raw';
 
 const kernelBindings = {
     buildOpenBits: [12, 13],
     enforceBoundaries: [1, 3, 4, 5],
+    curl: [1, 3, 4, 8],
+    forces: [0, 1, 2, 3, 4, 5, 7],
+    advect: [0, 1, 2, 3, 4, 5, 6],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
@@ -39,6 +45,9 @@ function createVolume(label: string, format: GPUTextureFormat): GPUTexture {
 export class FluidSolver {
     dt = 0.5;
     jacobiIterations = 40;
+    buoyancy = 1;
+    confinement = 0.1;
+    lastDivergence: DivergenceReport | undefined;
 
     private readonly pressure = new PingPong('pressure', 'r32float');
     private readonly divergence = createVolume('divergence', 'r32float');
@@ -57,9 +66,28 @@ export class FluidSolver {
 
     private readonly kernels = {} as Record<KernelName, Kernel>;
     private obstacleVersion = -1;
+    private thermalRequested = false;
+    private steps = 0;
+    private readonly divergenceReadback = new URLSearchParams(location.search).has('checkDivergence')
+        ? device.createBuffer({
+            label: 'solver divergence readback',
+            size: DivergenceCheck.bufferSize,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        })
+        : undefined;
+
+    private readonly divergenceCheck = this.divergenceReadback
+        ? new DivergenceCheck(this.divergenceReadback)
+        : undefined;
 
     constructor(readonly fields: Fields, readonly weather: WeatherData) {
-        const source = [commonSource, boundarySource, projectionSource].join('\n');
+        const source = [
+            commonSource,
+            boundarySource,
+            projectionSource,
+            transportSource,
+            forceSource
+        ].join('\n');
         const module = device.createShaderModule({
             label: 'fluid solver',
             code: processShaderRaw(source)
@@ -92,14 +120,69 @@ export class FluidSolver {
         const folder = gui.addFolder('Fluid solver');
         folder.add(this, 'dt', 0.05, 1, 0.05).name('Time step (s)');
         folder.add(this, 'jacobiIterations', 1, 200, 1).name('Pressure iterations');
+        folder.add(this, 'buoyancy', 0, 2, 0.1).name('Buoyancy');
+        folder.add(this, 'confinement', 0, 0.5, 0.01).name('Vorticity confinement');
+        folder.add(this, 'addThermal').name('Add warm thermal');
     }
 
+    // Encode once per frame before raymarching; the renderer submits the encoder.
     step(encoder: GPUCommandEncoder) {
-        this.project(encoder);
+        device.queue.writeBuffer(this.parameters, 0, new Float32Array([
+            this.dt,
+            this.buoyancy,
+            this.confinement,
+            Number(this.thermalRequested)
+        ]));
+        this.thermalRequested = false;
+
+        this.prepareBoundaries(encoder);
+        this.dispatch(encoder, 'curl');
+        this.dispatch(encoder, 'forces');
+        this.fields.velocity.swap();
+
+        this.dispatch(encoder, 'advect');
+        this.fields.velocity.swap();
+        this.fields.thermo.swap();
+
+        this.projectPressure(encoder);
+        this.steps++;
+
+        if (this.steps % 120 === 1) {
+            this.checkDivergence(encoder);
+        }
+    }
+
+    addThermal() {
+        this.thermalRequested = true;
+    }
+
+    checkDivergence(encoder: GPUCommandEncoder): Promise<DivergenceReport> | undefined {
+        const result = this.divergenceCheck?.capture(
+            encoder,
+            this.fields,
+            this.openBits,
+            this.weather.atmosphereBuffer
+        );
+
+        void result?.then(report => {
+            this.lastDivergence = report;
+
+            if (report.rms > 5e-4 || report.nonFinite > 0) {
+                console.warn('Solver divergence is above target', report);
+            } else {
+                console.log('Solver divergence', report);
+            }
+        }).catch(console.error);
+
+        return result;
     }
 
     project(encoder: GPUCommandEncoder) {
         this.prepareBoundaries(encoder);
+        this.projectPressure(encoder);
+    }
+
+    private projectPressure(encoder: GPUCommandEncoder) {
         this.dispatch(encoder, 'divergence');
 
         const kernel = this.kernels.jacobi;
@@ -235,5 +318,6 @@ export class FluidSolver {
         this.divergence.destroy();
         this.openBits.destroy();
         this.vorticity.destroy();
+        this.divergenceReadback?.destroy();
     }
 }
