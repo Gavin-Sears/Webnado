@@ -128,7 +128,7 @@ fn advect(@builtin(global_invocation_id) id: vec3u) {
         let position = vec3f(cell) + vec3f(0.5);
         let departure = traceBack(position);
         thermo = sampleThermo(departure);
-        thermo.xy += background(departure.y).state.xy - background(position.y).state.xy;
+        thermo += vec4f(background(departure.y).state.xy - background(position.y).state.xy, 0.0, 0.0);
 
         if (parameters.addThermal > 0.0) {
             let world = domainMin + position * cellSize;
@@ -140,7 +140,7 @@ fn advect(@builtin(global_invocation_id) id: vec3u) {
         }
 
         thermo.y = max(thermo.y, -background(position.y).state.y);
-        thermo.zw = max(thermo.zw, vec2f(0));
+        thermo = vec4f(thermo.xy, max(thermo.zw, vec2f(0)));
     }
 
     textureStore(thermoOut, cell, thermo);

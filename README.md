@@ -16,9 +16,7 @@ npm run typecheck   # typecheck without building
 
 When loading cesium tiles is implemented, set `VITE_CESIUM_ION_TOKEN` in the `.env` file. Never commit `.env`.
 
-Right now you should see a gray test cloud above a green plane. `WebGPU init successful` will appear in the console.
-
-This WebGPU setup follows a similar structure to our previous WebGPU assignments. `src/renderer.ts` contains `initWebGPU()` which sets up our device and context. There is also a `Renderer` base class, where `src/renderers/` (not committed yet) holds subclasses. We also have similar shader loading logic in `shaders.ts`, which prepends `common.wgsl`.
+This WebGPU setup follows a similar structure to our previous WebGPU assignments. `src/renderer.ts` contains `initWebGPU()` which sets up our device and context. There is also a `Renderer` base class, where `src/renderers/` holds subclasses. We also have similar shader loading logic in `shaders.ts`, which prepends `common.wgsl`.
 
 ## URL Parameters
 
