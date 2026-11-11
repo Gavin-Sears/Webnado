@@ -50,6 +50,7 @@ export class Fields {
 
     private obstacle = createField("obstacle", "r32uint");
     obstacleView = this.obstacle.createView();
+    obstacleVersion = 0;
 
     // The idea behind the obstacles is that we will have an entry for
     // each spatial grid cell. In each cell, we will denote what material
@@ -68,5 +69,6 @@ export class Fields {
             { bytesPerRow: gridX * 4, rowsPerImage: gridY },
             { width: gridX, height: gridY, depthOrArrayLayers: gridZ }
         );
+        this.obstacleVersion++;
     }
 }

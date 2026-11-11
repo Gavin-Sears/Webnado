@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Webnado solver checks</title>
+        <style>
+            body { margin: 24px; background: #17191d; color: #eee; font: 15px monospace; }
+            #mainCanvas { width: 128px; height: 128px; }
+            pre { white-space: pre-wrap; line-height: 1.6; }
+        </style>
+    </head>
+    <body>
+        <h1>Solver GPU checks</h1>
+        <p>Use <code>?res=low&amp;checkDivergence</code>. Results also appear in the console.</p>
+        <canvas id="mainCanvas"></canvas>
+        <pre id="results">Starting WebGPU...</pre>
+        <script type="module" src="/src/solver/solver.test.ts"></script>
+    </body>
+</html>

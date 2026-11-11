@@ -26,7 +26,7 @@ export class WeatherData {
         this.atmosphereBuffer = device.createBuffer({
             label: "atmosphere",
             size: constants.atmosphereSlices * VALUES_PER_SLICE * 4,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
         this.setAtmosphere(this.placeholderAtmosphere());
     }
