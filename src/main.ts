@@ -1,9 +1,7 @@
 import GUI from 'lil-gui';
 
-// import { initWebGPU, showFatalError } from './renderer';
-// replace below with above after adding new logic
-import { context, device, initWebGPU, Renderer, showFatalError } from './renderer';
-// import { VolumetricRenderer } from './renderers/volumetric';
+import { initWebGPU, showFatalError } from './renderer';
+import { VolumetricRenderer } from './renderers/volumetric';
 import { resolutionName, resolutions } from './shaders/shaders';
 
 import { Stage } from './stage/stage';
@@ -12,8 +10,7 @@ async function start() {
     await initWebGPU();
 
     const stage = await Stage.create();
-    // const renderer = new VolumetricRenderer(stage);
-    new ClearRenderer(stage);
+    const renderer = new VolumetricRenderer(stage);
 
     const gui = new GUI();
 
@@ -25,26 +22,10 @@ async function start() {
         window.location.href = url.href;
     });
 
-    // stage.weather.buildGui(gui);
-    // stage.gis.buildGui(gui);
-    // stage.solver.buildGui(gui);
-    // renderer.buildGui(gui);
-}
-
-// Temporary clear screen renderer
-class ClearRenderer extends Renderer {
-    protected override draw() {
-        const encoder = device.createCommandEncoder();
-        encoder.beginRenderPass({
-            colorAttachments: [{
-                view: context.getCurrentTexture().createView(),
-                clearValue: [0.32, 0.42, 0.58, 1],
-                loadOp: "clear",
-                storeOp: "store"
-            }]
-        }).end();
-        device.queue.submit([encoder.finish()]);
-    }
+    stage.weather.buildGui(gui);
+    stage.gis.buildGui(gui);
+    stage.solver.buildGui(gui);
+    renderer.buildGui(gui);
 }
 
 start().catch((error) => {
