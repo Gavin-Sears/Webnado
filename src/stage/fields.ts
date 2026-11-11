@@ -7,7 +7,7 @@ function createField(label: string, format: GPUTextureFormat): GPUTexture {
     return device.createTexture({
         label,
         dimension: "3d",
-        size: [constants.gridX, constants.gridY, constants.gridZ],
+        size: { width: constants.gridX, height: constants.gridY, depthOrArrayLayers: constants.gridZ },
         format,
         usage: fieldUsage
     });
@@ -67,7 +67,7 @@ export class Fields {
             { texture: this.obstacle },
             Uint32Array.from(materials),
             { bytesPerRow: gridX * 4, rowsPerImage: gridY },
-            [gridX, gridY, gridZ]
+            { width: gridX, height: gridY, depthOrArrayLayers: gridZ }
         );
         this.obstacleVersion++;
     }
