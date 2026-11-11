@@ -2,10 +2,11 @@
 
 import commonRaw from './common.wgsl?raw';
 
-// these files are ones I am not committing yet because they need more work/time
-// import fullscreenVertRaw from './fullscreen.vs.wgsl?raw';
-// import raymarchFragRaw from './raymarch.fs.wgsl?raw';
-// import testVolumeComputeRaw from './test_volume.cs.wgsl?raw';
+import bricksComputeRaw from './bricks.cs.wgsl?raw';
+import compositeFragRaw from './composite.fs.wgsl?raw';
+import fullscreenVertRaw from './fullscreen.vs.wgsl?raw';
+import raymarchFragRaw from './raymarch.fs.wgsl?raw';
+import testVolumeComputeRaw from './test_volume.cs.wgsl?raw';
 
 // CONSTANTS (for use in shaders)
 // =================================
@@ -34,7 +35,9 @@ export const constants = {
     domainY: 6400,
     domainZ: 12800,
 
-    atmosphereSlices: 64
+    atmosphereSlices: 64,
+
+    brickSize: 8    // cells per side of a brick, for skipping empty space
 };
 
 // =================================
@@ -59,6 +62,8 @@ export function processShaderRaw(raw: string) {
     return commonSrc + evalShaderRaw(raw);
 }
 
-// export const fullscreenVertSrc: string = processShaderRaw(fullscreenVertRaw);
-// export const raymarchFragSrc: string = processShaderRaw(raymarchFragRaw);
-// export const testVolumeComputeSrc: string = processShaderRaw(testVolumeComputeRaw);
+export const fullscreenVertSrc: string = processShaderRaw(fullscreenVertRaw);
+export const raymarchFragSrc: string = processShaderRaw(raymarchFragRaw);
+export const compositeFragSrc: string = processShaderRaw(compositeFragRaw);
+export const bricksComputeSrc: string = processShaderRaw(bricksComputeRaw);
+export const testVolumeComputeSrc: string = processShaderRaw(testVolumeComputeRaw);
