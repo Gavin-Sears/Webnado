@@ -3,6 +3,10 @@ struct SolverParameters {
     buoyancy: f32,
     confinement: f32,
     addThermal: f32,
+    mixing: f32,
+    turbulence: f32,
+    transportedVorticity: f32,
+    initializeVorticity: f32,
 }
 
 @group(0) @binding(0) var<uniform> parameters: SolverParameters;
@@ -19,6 +23,10 @@ struct SolverParameters {
 @group(0) @binding(11) var scalarOut: texture_storage_3d<r32float, write>;
 @group(0) @binding(12) var obstacles: texture_3d<u32>;
 @group(0) @binding(13) var openBitsOut: texture_storage_3d<r32uint, write>;
+@group(0) @binding(14) var turbulenceIn: texture_3d<f32>;
+@group(0) @binding(15) var turbulenceOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(16) var forceIn: texture_3d<f32>;
+@group(0) @binding(17) var forceOut: texture_storage_3d<rgba16float, write>;
 
 const fluidBit = 64u;
 

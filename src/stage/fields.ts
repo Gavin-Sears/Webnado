@@ -47,6 +47,9 @@ export class PingPong {
 export class Fields {
     velocity = new PingPong("velocity", "rgba16float");
     thermo = new PingPong("thermo", "rgba16float");
+    // Turbulence channels are k (m²/s²), viscosity and mixing (m²/s), unused.
+    turbulence = new PingPong("turbulence", "rgba16float");
+    vorticity = new PingPong("transported vorticity", "rgba16float");
 
     private obstacle = createField("obstacle", "r32uint");
     obstacleView = this.obstacle.createView();

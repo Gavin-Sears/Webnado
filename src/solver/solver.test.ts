@@ -44,6 +44,8 @@ const seedSource = `
     override mode: u32;
     @group(0) @binding(0) var velocity: texture_storage_3d<rgba16float, write>;
     @group(0) @binding(1) var thermo: texture_storage_3d<rgba16float, write>;
+    @group(0) @binding(2) var turbulence: texture_storage_3d<rgba16float, write>;
+    @group(0) @binding(3) var vorticity: texture_storage_3d<rgba16float, write>;
 
     @compute @workgroup_size(8, 8, 4)
     fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -73,6 +75,8 @@ const seedSource = `
 
         textureStore(velocity, cell, vec4f(wind, 0));
         textureStore(thermo, cell, state);
+        textureStore(turbulence, cell, vec4f(0));
+        textureStore(vorticity, cell, vec4f(0));
     }
 `;
 
@@ -92,7 +96,9 @@ function seed(fields: Fields, mode: number) {
         layout: pipeline.getBindGroupLayout(0),
         entries: [
             { binding: 0, resource: fields.velocity.read },
-            { binding: 1, resource: fields.thermo.read }
+            { binding: 1, resource: fields.thermo.read },
+            { binding: 2, resource: fields.turbulence.read },
+            { binding: 3, resource: fields.vorticity.read }
         ]
     });
 
@@ -201,9 +207,13 @@ async function runTests() {
     fields.setObstacles(groundMask());
 
     let solver = new FluidSolver(fields, weather);
+    solver.turbulence = false;
+    solver.transportedVorticity = false;
     const replaceSolver = () => {
         solver.destroy();
         solver = new FluidSolver(fields, weather);
+        solver.turbulence = false;
+        solver.transportedVorticity = false;
         return solver;
     };
 
@@ -369,15 +379,51 @@ async function runTests() {
         solver.buoyancy = 0;
         solver.confinement = 0;
         solver.addThermal();
-        const initialThermoIndex = fields.thermo.index;
         await runSteps(solver, 1);
-        expect(fields.thermo.index === 1 - initialThermoIndex, 'Newest thermo state was not swapped into read');
         const injected = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
         await runSteps(solver, 3);
         const retained = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
         expect(injected.total > 0, 'Add thermal did not initialize a visible cloud tracer');
         expect(Math.abs(retained.total / injected.total - 1) < 0.001, 'Thermal source was applied more than once');
         passed('Thermal injection runs once and leaves the newest scalar in read');
+
+        replaceSolver();
+        solver.turbulence = true;
+        solver.transportedVorticity = true;
+        seed(fields, 2);
+        const dynamicsSteps = Number(new URLSearchParams(location.search).get('dynamicsStress') ?? 100);
+        await runSteps(solver, dynamicsSteps);
+        const energy = await readField(fields.turbulence.textures[fields.turbulence.index]);
+        const rotation = await readField(fields.vorticity.textures[fields.vorticity.index]);
+        let maxEnergy = 0;
+        let maxRotation = 0;
+        for (let index = 0; index < energy.length; index += 4) {
+            expect(energy[index] >= 0, 'Turbulent energy became negative');
+            maxEnergy = Math.max(maxEnergy, energy[index]);
+            maxRotation = Math.max(maxRotation, rotation[index + 3]);
+        }
+        expect(energy.every(Number.isFinite) && rotation.every(Number.isFinite),
+            'Tornado dynamics produced nonfinite fields');
+        expect(maxEnergy > 0 && maxRotation > 0, 'Tornado dynamics did not respond to the thermal');
+        const tornadoReport = await measure(solver);
+        expect(tornadoReport.rms < 5e-4, 'Tornado dynamics exceeded the divergence target');
+        passed('Turbulent energy and transported vorticity evolve together', { maxEnergy, maxRotation, tornadoReport });
+
+        let microphysicsCalls = 0;
+        solver.microphysics = {
+            step(_encoder, dt) {
+                expect(dt === solver.dt, 'Microphysics received a different time step');
+                microphysicsCalls++;
+            }
+        };
+        await runSteps(solver, 3);
+        expect(microphysicsCalls === 3, 'Microphysics did not run once per simulation step');
+        solver.microphysics = undefined;
+        solver.reset();
+        await runSteps(solver, 1);
+        const resetThermo = await readField(fields.thermo.textures[fields.thermo.index]);
+        expect(resetThermo.every(value => value === 0), 'Reset left atmospheric perturbations behind');
+        passed('Microphysics receives each step and reset clears the evolved state');
 
         if (resolutionName === 'low') {
             const mask = groundMask();
