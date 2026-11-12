@@ -99,7 +99,7 @@ export class GisTerrain {
         folder.add(this, 'longitude', -180, 180, 0.0001).name('Longitude');
         folder.add(this, 'elevation', -500, 5000, 1).name('Ground elevation (m)');
         folder.add(this, 'load').name('Load scene');
-        folder.add(this, 'bakeCollisions').name('Bake loaded collisions');
+        folder.add(this, 'bakeCollisions').name('Bake visible collisions');
         folder.add(this, 'status').name('Status').listen().disable();
     }
 
@@ -125,6 +125,7 @@ export class GisTerrain {
         if (this.source === 'demo') {
             void this.bakeCollisions();
         } else {
+            const generation = this.generation;
             const specs = this.source === 'cesium'
                 ? [{ material: 1, assetId: '1' }, { material: 2, assetId: '96188' }]
                 : [{ material: 2, assetId: undefined }];
@@ -135,7 +136,11 @@ export class GisTerrain {
                     this.source === 'cesium' ? this.site : undefined,
                     spec.assetId,
                     () => this.invalidate(),
-                    message => { this.status = `Loading failed: ${message}`; }
+                    message => {
+                        if (generation === this.generation) {
+                            this.status = `Loading failed: ${message}`;
+                        }
+                    }
                 );
                 this.layers.push(layer);
                 this.scene.add(layer.tiles.group);
@@ -159,6 +164,10 @@ export class GisTerrain {
             const objects = this.demo.visible
                 ? [{ scene: this.demo, material: 2 }]
                 : this.layers.flatMap(layer => layer.loadedScenes().map(scene => ({ scene, material: layer.material })));
+            if (objects.length === 0) {
+                this.status = 'No visible tiles to bake; wait for loading or move toward the scene';
+                return;
+            }
             for (const object of objects) {
                 const meshes: THREE.Mesh[] = [];
                 object.scene.traverse(child => {
@@ -167,6 +176,9 @@ export class GisTerrain {
                     }
                 });
                 for (const mesh of meshes) {
+                    if (generation !== this.generation) {
+                        return;
+                    }
                     await grid.addMesh(mesh, object.material);
                 }
             }

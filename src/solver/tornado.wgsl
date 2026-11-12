@@ -35,6 +35,7 @@ fn eddyViscosity(k: f32) -> f32 {
     // Explicit diffusion stays within its stability bound, including the symmetric stress term.
     let limit = 0.2 / (parameters.dt * (inverseSize.x + inverseSize.y + inverseSize.z)
         * max(1.0, 3.0 * parameters.mixing));
+    // A small energy floor lets shear start producing turbulence from a resting state.
     return min(0.2 * cellSize.x * sqrt(max(k, 1e-4)), limit) * parameters.turbulence;
 }
 
@@ -85,7 +86,7 @@ fn energy(@builtin(global_invocation_id) id: vec3u) {
             diffusion += viscosity * (upper - 2.0 * center + lower) / pow(cellSize[axis], 2.0);
         }
 
-        // Warm-water, dimensionally normalized one-equation closure for Eqs. 5–6.
+        // Warm-water, dimensionally normalized one-equation closure for Eqs. 5 and 6.
         let source = viscosity * strain - mixing * stratification + diffusion;
         let energyValue = max(0.0, previous + parameters.dt * source)
             / (1.0 + parameters.dt * 0.2 * sqrt(max(previous, 0.0)) / cellSize.x);

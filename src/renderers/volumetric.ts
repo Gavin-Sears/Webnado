@@ -322,6 +322,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const encoder = device.createCommandEncoder({ label: "frame" });
 
         solver.step(encoder);
+        // Particle drag returns momentum for the next fluid step.
         debris.step(encoder, solver.dt, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn

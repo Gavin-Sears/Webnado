@@ -70,6 +70,9 @@ export class TileLayer {
                 this.tiles.group.updateMatrixWorld(true);
                 event.scene.updateWorldMatrix(true, true);
                 const bounds = new Box3().setFromObject(event.scene);
+                if (event.scene.parent !== this.tiles.group) {
+                    bounds.applyMatrix4(this.tiles.group.matrixWorld);
+                }
                 if (!bounds.isEmpty()) {
                     this.tiles.group.position.y -= bounds.min.y;
                     this.tiles.group.updateMatrixWorld(true);
@@ -84,7 +87,10 @@ export class TileLayer {
 
     loadedScenes(): Object3D[] {
         const scenes: Object3D[] = [];
-        this.tiles.forEachLoadedModel(scene => {
+        this.tiles.forEachLoadedModel((scene, tile) => {
+            if (!this.tiles.visibleTiles.has(tile)) {
+                return;
+            }
             const bounds = new Box3().setFromObject(scene);
             if (!bounds.isEmpty()) {
                 scenes.push(scene);

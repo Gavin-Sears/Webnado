@@ -7,6 +7,9 @@ import { Fields } from '../stage/fields';
 import { WeatherData } from '../weather/noaa_loader';
 import { ObstacleGrid } from './obstacle_grid';
 import { Debris } from './debris';
+import { FluidSolver } from '../solver/fluid_solver';
+import { TileLayer } from './tile_layer';
+import type { Tile } from '3d-tiles-renderer/core';
 
 const output = document.getElementById('results')!;
 const h = constants.domainX / constants.gridX;
@@ -54,6 +57,18 @@ async function run() {
     expect(grid.materials.every((value, index) => value === snapshot[index]), 'Unloading changed the collision snapshot');
     passed('Collision snapshots retain world transforms and survive unloading');
 
+    const layer = new TileLayer('', 2, undefined, undefined, () => {}, () => {});
+    layer.tiles.group.position.set(-1000, -2000, -3000);
+    layer.tiles.group.updateMatrixWorld(true);
+    const detached = new Mesh(new BoxGeometry(20, 20, 20));
+    detached.position.set(1000, 2010, 3000);
+    layer.tiles.dispatchEvent({ type: 'load-model', scene: detached, tile: {} as Tile, url: '' });
+    expect(Math.abs(layer.tiles.group.position.y + 2000) < 1e-6,
+        'Detached tile content was aligned using Earth-space bounds');
+    layer.dispose();
+    detached.geometry.dispose();
+    passed('Tile placement handles model events before scene attachment');
+
     await initWebGPU();
     device.pushErrorScope('validation');
     const fields = new Fields();
@@ -69,10 +84,10 @@ async function run() {
         size: forcingRow * constants.gridY * constants.gridZ,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
     });
-    const readForcing = async () => {
+    const readVolume = async (texture: GPUTexture) => {
         const encoder = device.createCommandEncoder();
         encoder.copyTextureToBuffer(
-            { texture: fields.windForcing },
+            { texture },
             { buffer: forcingReadback, bytesPerRow: forcingRow, rowsPerImage: constants.gridY },
             [constants.gridX, constants.gridY, constants.gridZ]
         );
@@ -124,7 +139,7 @@ async function run() {
         const swept = await inspect();
         expect(swept[0] < -h, 'Fast debris tunneled through the building');
         passed('Swept collision checks stop debris crossing a building in one step');
-        const reaction = await readForcing();
+        const reaction = await readVolume(fields.windForcing);
         const originX = constants.gridX / 2 - 5;
         const originZ = constants.gridZ / 2;
         const offset = forcingRow / 2 * (2 + constants.gridY * originZ) + originX * 4;
@@ -138,8 +153,46 @@ async function run() {
         device.queue.submit([clearEncoder.finish()]);
         const cleared = await inspect();
         expect(cleared.every(value => value === 0), 'Clear left active debris behind');
-        expect((await readForcing()).every(value => value === 0), 'Clear left a momentum source behind');
+        expect((await readVolume(fields.windForcing)).every(value => value === 0), 'Clear left a momentum source behind');
         passed('Clear removes particles and their momentum source');
+
+        const solver = new FluidSolver(fields, weather);
+        solver.startShearExperiment();
+        debris.response = 0.2;
+        try {
+            for (let frame = 0; frame < 250; frame++) {
+                const encoder = device.createCommandEncoder();
+                solver.step(encoder);
+                if (frame === 0) {
+                    debris.seed();
+                }
+                debris.step(encoder, solver.dt, solver.resetVersion);
+                device.queue.submit([encoder.finish()]);
+                if (frame % 8 === 7) {
+                    await device.queue.onSubmittedWorkDone();
+                }
+            }
+            await device.queue.onSubmittedWorkDone();
+            await inspect();
+            for (const field of [fields.velocity, fields.thermo, fields.turbulence, fields.vorticity]) {
+                const values = await readVolume(field.textures[field.index]);
+                expect(values.every(value => (value & 0x7c00) !== 0x7c00), 'Coupled experiment produced nonfinite fields');
+            }
+            const measure = async () => {
+                const encoder = device.createCommandEncoder();
+                const report = solver.checkDivergence(encoder);
+                device.queue.submit([encoder.finish()]);
+                expect(report !== undefined, 'Run the GIS test with checkDivergence in the URL');
+                return report!;
+            };
+            await measure();
+            const report = await measure();
+            console.log('Coupled shear experiment', report);
+            expect(report.rms < 5e-4 && report.nonFinite === 0, 'Coupled experiment exceeded the divergence target');
+            passed('Shear, turbulence, buildings, and debris stay finite for 250 coupled steps');
+        } finally {
+            solver.destroy();
+        }
 
         const error = await device.popErrorScope();
         expect(error === null, error?.message ?? 'GPU validation failed');

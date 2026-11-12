@@ -86,7 +86,7 @@ export class Debris {
         const folder = gui.addFolder('Debris');
         folder.add(this, 'enabled').name('Enabled');
         folder.add(this, 'response', 0.02, 2, 0.02).name('Drag response (s)');
-        folder.add(this, 'mass', 0.001, 1, 0.001).name('Particle mass (kg)');
+        folder.add(this, 'mass', 0.001, 1, 0.001).name('Seed mass (kg)');
         folder.add(this, 'restitution', 0, 0.8, 0.05).name('Bounce');
         folder.add(this, 'friction', 0, 1, 0.05).name('Friction');
         folder.add(this, 'size', 1, 6, 0.5).name('Display size (px)');
