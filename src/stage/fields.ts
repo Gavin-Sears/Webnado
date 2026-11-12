@@ -50,6 +50,8 @@ export class Fields {
     // Turbulence channels are k (m²/s²), viscosity and mixing (m²/s), unused.
     turbulence = new PingPong("turbulence", "rgba16float");
     vorticity = new PingPong("transported vorticity", "rgba16float");
+    readonly windForcing = createField("debris feedback acceleration", "rgba16float");
+    readonly windForcingView = this.windForcing.createView();
 
     private obstacle = createField("obstacle", "r32uint");
     obstacleView = this.obstacle.createView();

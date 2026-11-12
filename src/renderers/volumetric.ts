@@ -310,7 +310,7 @@ export class VolumetricRenderer extends renderer.Renderer {
     }
 
     override draw() {
-        const { gis, camera, solver, fields } = this.stage;
+        const { gis, camera, solver, fields, debris } = this.stage;
         const device = renderer.device;
         const profiler = renderer.profiler;
 
@@ -322,6 +322,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const encoder = device.createCommandEncoder({ label: "frame" });
 
         solver.step(encoder);
+        debris.step(encoder, solver.dt, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn
         if (this.brickSkipping || this.debugView === 'bricks') {
@@ -360,6 +361,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         compositePass.setBindGroup(0, this.compositeBindGroup!);
         compositePass.draw(3);
         compositePass.end();
+        debris.draw(encoder, gis.sceneDepthTexture);
 
         profiler?.resolve(encoder);
         device.queue.submit([encoder.finish()]);

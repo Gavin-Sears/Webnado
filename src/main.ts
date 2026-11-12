@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 
 import { initWebGPU, showFatalError } from './renderer';
 import { VolumetricRenderer } from './renderers/volumetric';
-import { resolutionName, resolutions } from './shaders/shaders';
+import { domainName, domains, resolutionName, resolutions } from './shaders/shaders';
 
 import { Stage } from './stage/stage';
 
@@ -21,10 +21,16 @@ async function start() {
         url.searchParams.set('res', resolution);
         window.location.href = url.href;
     });
+    gui.add({ domain: domainName }, 'domain', Object.keys(domains)).onChange((domain: string) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('domain', domain);
+        window.location.href = url.href;
+    });
 
     stage.weather.buildGui(gui);
     stage.gis.buildGui(gui);
     stage.solver.buildGui(gui);
+    stage.debris.buildGui(gui);
     renderer.buildGui(gui);
 }
 

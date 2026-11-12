@@ -132,8 +132,8 @@ fn advect(@builtin(global_invocation_id) id: vec3u) {
 
         if (parameters.addThermal > 0.0) {
             let world = domainMin + position * cellSize;
-            let radius = max(700.0, cellSize.x);
-            let height = max(600.0, 2.0 * cellSize.y);
+            let radius = max(min(700.0, 0.08 * domainSize.x), cellSize.x);
+            let height = max(min(600.0, 0.1 * domainSize.y), 2.0 * cellSize.y);
             let distance = vec3f(world.x / radius, (world.y - height) / height, world.z / radius);
             let weight = exp(-dot(distance, distance));
             thermo += weight * vec4f(2.0, 0, 0.2, 0);

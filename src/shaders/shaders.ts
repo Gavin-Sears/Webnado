@@ -23,6 +23,9 @@ export const resolutions: Record<string, [number, number, number]> = {
 const requestedResolution = new URLSearchParams(window.location.search).get('res') ?? 'medium';
 export const resolutionName = Object.hasOwn(resolutions, requestedResolution) ? requestedResolution : 'medium';
 const [gridX, gridY, gridZ] = resolutions[resolutionName];
+export const domains = { storm: [12800, 6400, 12800], local: [3200, 1600, 3200] } as const;
+export const domainName = new URLSearchParams(window.location.search).get('domain') === 'local' ? 'local' : 'storm';
+const [domainX, domainY, domainZ] = domains[domainName];
 
 // Declared this way so minification keeps values that only shaders use
 export const constants = {
@@ -31,9 +34,9 @@ export const constants = {
     gridZ,
 
     // box size in meters, centered on x = z = 0 with the ground at y = 0
-    domainX: 12800,
-    domainY: 6400,
-    domainZ: 12800,
+    domainX,
+    domainY,
+    domainZ,
 
     atmosphereSlices: 64,
 

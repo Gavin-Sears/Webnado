@@ -24,11 +24,12 @@ const kernelBindings = {
     curl: [1, 3, 4, 8],
     forces: [0, 1, 3, 4, 5, 7, 16],
     energy: [0, 1, 2, 3, 4, 14, 15],
-    atmosphericForces: [0, 1, 2, 3, 4, 14, 17],
+    atmosphericForces: [0, 1, 2, 3, 4, 14, 17, 18],
     evolveVorticity: [0, 1, 3, 4, 7, 8, 14, 16],
     mixThermo: [0, 2, 3, 6, 14],
     resetFields: [4, 5, 6, 8, 15],
     clearPressure: [11],
+    clearForcing: [19],
     advect: [0, 1, 2, 3, 4, 5, 6],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 9, 10, 11],
@@ -63,6 +64,7 @@ export class FluidSolver {
     transportedVorticity = true;
     mixing = 0.1;
     microphysics: Microphysics | undefined;
+    resetVersion = 0;
     lastDivergence: DivergenceReport | undefined;
 
     private readonly pressure = new PingPong('pressure', 'r32float');
@@ -154,6 +156,7 @@ export class FluidSolver {
     // Encode once per frame before raymarching; the renderer submits the encoder.
     step(encoder: GPUCommandEncoder) {
         if (this.resetRequested) {
+            this.dispatch(encoder, 'clearForcing');
             this.dispatch(encoder, 'resetFields');
             this.fields.velocity.swap();
             this.fields.thermo.swap();
@@ -206,6 +209,7 @@ export class FluidSolver {
     }
 
     reset() {
+        this.resetVersion++;
         this.resetRequested = true;
         this.initializeRotation = true;
         this.thermalRequested = false;
@@ -303,7 +307,7 @@ export class FluidSolver {
             entry.buffer = { type: 'uniform' };
         } else if (binding === 4) {
             entry.buffer = { type: 'read-only-storage' };
-        } else if ([5, 6, 8, 11, 13, 15, 17].includes(binding)) {
+        } else if ([5, 6, 8, 11, 13, 15, 17, 19].includes(binding)) {
             let format: GPUTextureFormat = 'rgba16float';
 
             if (binding === 11) {
@@ -356,7 +360,9 @@ export class FluidSolver {
             14: this.fields.turbulence.read,
             15: this.fields.turbulence.write,
             16: this.atmosphericForceView,
-            17: this.atmosphericForceView
+            17: this.atmosphericForceView,
+            18: this.fields.windForcingView,
+            19: this.fields.windForcingView
         };
 
         const entries = kernelBindings[name].map(binding => ({

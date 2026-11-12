@@ -219,6 +219,8 @@ async function runTests() {
 
     try {
         if (resolutionName !== 'low') {
+            solver.turbulence = true;
+            solver.transportedVorticity = true;
             seed(fields, 2);
             await runSteps(solver, 3);
             await measure(solver);
@@ -409,15 +411,49 @@ async function runTests() {
         expect(tornadoReport.rms < 5e-4, 'Tornado dynamics exceeded the divergence target');
         passed('Turbulent energy and transported vorticity evolve together', { maxEnergy, maxRotation, tornadoReport });
 
+        solver.reset();
+        await runSteps(solver, 1);
+        const microphysicsModule = device.createShaderModule({ code: processShaderRaw(`
+            @group(0) @binding(0) var input: texture_3d<f32>;
+            @group(0) @binding(1) var output: texture_storage_3d<rgba16float, write>;
+            @compute @workgroup_size(8, 8, 4)
+            fn main(@builtin(global_invocation_id) id: vec3u) {
+                if (all(vec3i(id) < gridDims)) {
+                    let state = textureLoad(input, vec3i(id), 0);
+                    textureStore(output, vec3i(id), state + vec4f(0.125, 0, 0.01, 0));
+                }
+            }
+        `) });
+        const microphysicsPipeline = device.createComputePipeline({
+            layout: 'auto', compute: { module: microphysicsModule }
+        });
+        const microphysicsGroups = [0, 1].map(index => device.createBindGroup({
+            layout: microphysicsPipeline.getBindGroupLayout(0),
+            entries: [
+                { binding: 0, resource: fields.thermo.view(index) },
+                { binding: 1, resource: fields.thermo.view(1 - index) }
+            ]
+        }));
         let microphysicsCalls = 0;
         solver.microphysics = {
-            step(_encoder, dt) {
+            step(encoder, dt) {
                 expect(dt === solver.dt, 'Microphysics received a different time step');
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(microphysicsPipeline);
+                pass.setBindGroup(0, microphysicsGroups[fields.thermo.index]);
+                pass.dispatchWorkgroups(constants.gridX / 8, constants.gridY / 8, constants.gridZ / 4);
+                pass.end();
+                fields.thermo.swap();
                 microphysicsCalls++;
             }
         };
         await runSteps(solver, 3);
         expect(microphysicsCalls === 3, 'Microphysics did not run once per simulation step');
+        const microphysicsState = await readField(fields.thermo.textures[fields.thermo.index]);
+        const middle = 4 * (constants.gridX / 2
+            + constants.gridX * (constants.gridY / 2 + constants.gridY * constants.gridZ / 2));
+        expect(Math.abs(microphysicsState[middle + 2] - 0.03) < 0.002,
+            'Solver transport or ping-pong swaps overwrote microphysics output');
         solver.microphysics = undefined;
         solver.reset();
         await runSteps(solver, 1);

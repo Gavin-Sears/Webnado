@@ -27,6 +27,8 @@ struct SolverParameters {
 @group(0) @binding(15) var turbulenceOut: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(16) var forceIn: texture_3d<f32>;
 @group(0) @binding(17) var forceOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(18) var windForcing: texture_3d<f32>;
+@group(0) @binding(19) var windForcingOut: texture_storage_3d<rgba16float, write>;
 
 const fluidBit = 64u;
 

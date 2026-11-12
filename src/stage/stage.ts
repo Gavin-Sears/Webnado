@@ -3,11 +3,13 @@ import { FluidSolver } from "../solver/fluid_solver";
 import { WeatherData } from "../weather/noaa_loader";
 import { Camera } from "./camera";
 import { Fields } from "./fields";
+import { Debris } from "../gis/debris";
 
 // The center of the simulated box on Earth, shared by weather and tiles
 export interface Site {
     latitude: number;
     longitude: number;
+    elevation?: number;
 }
 
 // Default is the location of an EF4 tornado in Greenfield Iowa on May 21, 2024
@@ -22,7 +24,8 @@ export class Stage {
         readonly fields: Fields,
         readonly weather: WeatherData,
         readonly gis: GisTerrain,
-        readonly solver: FluidSolver
+        readonly solver: FluidSolver,
+        readonly debris: Debris
     ) {}
 
     static async create(): Promise<Stage> {
@@ -33,10 +36,11 @@ export class Stage {
         const weather = new WeatherData(site);
 
         const gis = await GisTerrain.create(site);
-        fields.setObstacles(gis.obstacleMaterials());
+        await gis.connect(fields);
 
         const solver = new FluidSolver(fields, weather);
+        const debris = new Debris(fields, weather, camera);
 
-        return new Stage(site, camera, fields, weather, gis, solver);
+        return new Stage(site, camera, fields, weather, gis, solver, debris);
     }
 }

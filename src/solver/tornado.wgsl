@@ -69,8 +69,8 @@ fn energy(@builtin(global_invocation_id) id: vec3u) {
         let dx = velocityDerivative(cell, 0);
         let dy = velocityDerivative(cell, 1);
         let dz = velocityDerivative(cell, 2);
-        let strain = 2.0 * (dx.x * dx.x + dy.y * dy.y + dz.z * dz.z)
-            + pow(dx.y + dy.x, 2.0) + pow(dx.z + dz.x, 2.0) + pow(dy.z + dz.y, 2.0);
+        let shear = vec3f(dx.y + dy.x, dx.z + dz.x, dy.z + dz.y);
+        let strain = 2.0 * (dx.x * dx.x + dy.y * dy.y + dz.z * dz.z) + dot(shear, shear);
         let theta = background(position.y).state.x;
         let stratification = parameters.buoyancy * 9.81 / theta
             * (virtualTemperature(cell + vec3i(0, 1, 0)) - virtualTemperature(cell - vec3i(0, 1, 0)))
@@ -123,7 +123,7 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
 
     var force = vec3f(0);
     if (fluid(cell)) {
-        force.y = buoyancyAt(cell);
+        force = textureLoad(windForcing, cell, 0).xyz + vec3f(0, buoyancyAt(cell), 0);
         for (var axis = 0; axis < 3; axis++) {
             let offset = axisOffset(axis);
             force += (stress(cell, axis) - stress(cell - offset, axis)) / cellSize[axis];
@@ -216,5 +216,12 @@ fn resetFields(@builtin(global_invocation_id) id: vec3u) {
 fn clearPressure(@builtin(global_invocation_id) id: vec3u) {
     if (inside(vec3i(id))) {
         textureStore(scalarOut, vec3i(id), vec4f(0));
+    }
+}
+
+@compute @workgroup_size(8, 8, 4)
+fn clearForcing(@builtin(global_invocation_id) id: vec3u) {
+    if (inside(vec3i(id))) {
+        textureStore(windForcingOut, vec3i(id), vec4f(0));
     }
 }
