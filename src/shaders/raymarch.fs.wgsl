@@ -28,6 +28,8 @@ struct RaymarchParams {
 @group(0) @binding(5) var brickMax: texture_3d<f32>;   // largest qc + qr near each brick (bricks.cs.wgsl)
 @group(0) @binding(6) var velocity: texture_3d<f32>;   // debug views only
 @group(0) @binding(7) var obstacle: texture_3d<u32>;   // debug views only
+@group(0) @binding(8) var dustVelocity: texture_3d<f32>;
+@group(0) @binding(9) var dustDensity: texture_3d<f32>;
 
 const pi = 3.14159265;
 const earlyExitTransmittance = 0.01;
@@ -167,6 +169,15 @@ fn velocityAt(uvw: vec3f) -> vec3f {
     );
 }
 
+fn dustVelocityAt(uvw: vec3f) -> vec3f {
+    let half = 0.5 / vec3f(gridDims);
+    return vec3f(
+        textureSampleLevel(dustVelocity, linearSampler, uvw + vec3f(half.x, 0, 0), 0).x,
+        textureSampleLevel(dustVelocity, linearSampler, uvw + vec3f(0, half.y, 0), 0).y,
+        textureSampleLevel(dustVelocity, linearSampler, uvw + vec3f(0, 0, half.z), 0).z
+    );
+}
+
 // Curl of velocity (1/s), by central differences one cell apart
 fn vorticityAt(uvw: vec3f) -> vec3f {
     let cell = 1.0 / vec3f(gridDims);
@@ -223,6 +234,18 @@ fn debugMarch(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32) -> vec4f {
                 let material = textureLoad(obstacle, cell, 0).r;
                 sampleColor = select(vec3f(0.75), vec3f(0.45, 0.32, 0.18), material == 1u);
                 opacity = select(0.0, 1.0, material != 0u);
+            }
+            case 7u: {
+                let cell = clamp(vec3i(floor(uvw * vec3f(gridDims))), vec3i(0), gridDims - 1);
+                let amount = textureLoad(dustDensity, cell, 0).x / params.debugScale;
+                sampleColor = heat(amount);
+                opacity = 0.05 * clamp(amount, 0.0, 1.0);
+            }
+            case 8u: {
+                let velocity = dustVelocityAt(uvw);
+                let speed = length(velocity);
+                sampleColor = 0.5 + 0.5 * velocity / max(speed, 1e-6);
+                opacity = 0.05 * clamp(speed / params.debugScale, 0.0, 1.0);
             }
             // bricks the raymarcher won't skip, in checkerboard pattern
             default: {

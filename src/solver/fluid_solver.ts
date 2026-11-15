@@ -60,7 +60,7 @@ export class FluidSolver {
     dt = 0.5;
     jacobiIterations = 40;
     buoyancy = 1;
-    confinement = 0.1;
+    confinement = 0.025;
     turbulence = true;
     transportedVorticity = true;
     mixing = 0.1;
@@ -145,7 +145,7 @@ export class FluidSolver {
         folder.add(this, 'dt', 0.05, 1, 0.05).name('Time step (s)');
         folder.add(this, 'jacobiIterations', 1, 200, 1).name('Pressure iterations');
         folder.add(this, 'buoyancy', 0, 2, 0.1).name('Buoyancy');
-        folder.add(this, 'confinement', 0, 0.5, 0.01).name('Vorticity confinement');
+        folder.add(this, 'confinement', 0, 0.5, 0.005).name('Vorticity confinement');
         folder.add(this, 'turbulence').name('Turbulent mixing');
         folder.add(this, 'mixing', 0, 0.5, 0.01).name('Mixing coefficient');
         folder.add(this, 'transportedVorticity').name('Transport vorticity').onChange(() => {

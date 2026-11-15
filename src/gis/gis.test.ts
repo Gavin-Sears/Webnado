@@ -1,7 +1,7 @@
 import { BoxGeometry, Group, Mesh, Vector3 } from 'three';
 
 import { device, initWebGPU } from '../renderer';
-import { constants } from '../shaders/shaders';
+import { constants, processShaderRaw } from '../shaders/shaders';
 import { Camera } from '../stage/camera';
 import { Fields } from '../stage/fields';
 import { WeatherData } from '../weather/noaa_loader';
@@ -74,7 +74,7 @@ async function run() {
     const fields = new Fields();
     fields.setObstacles(grid.materials);
     const weather = new WeatherData({ latitude: 41.31, longitude: -94.46 });
-    const debris = new Debris(fields, weather, new Camera());
+    const debris = new Debris(fields, new Camera(), () => {});
     const readback = device.createBuffer({
         size: debris.particles.size,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
@@ -127,25 +127,38 @@ async function run() {
         }
         const settled = await inspect();
         expect(settled.some((value, index) => index % 8 === 3 && value === 1), 'No active debris was seeded');
-        passed('GPU debris settles without entering terrain or buildings');
+        passed('Dust tracers remain outside terrain and buildings');
 
         const seed = new Float32Array(debris.count * 8);
         seed.set([-5 * h, 2 * h, 0, 1, 100 * h, 0, 0, 0.02]);
         device.queue.writeBuffer(debris.particles, 0, seed);
-        debris.response = 1000;
+        const flowPipeline = device.createComputePipeline({
+            layout: 'auto',
+            compute: { module: device.createShaderModule({ code: processShaderRaw(`
+                @group(0) @binding(0) var output: texture_storage_3d<rgba16float, write>;
+                @compute @workgroup_size(8, 8, 4)
+                fn main(@builtin(global_invocation_id) id: vec3u) {
+                    textureStore(output, vec3i(id), vec4f(${100 * h}, 0, 0, 0));
+                }
+            `) }) }
+        });
         const encoder = device.createCommandEncoder();
+        const flowPass = encoder.beginComputePass();
+        flowPass.setPipeline(flowPipeline);
+        flowPass.setBindGroup(0, device.createBindGroup({
+            layout: flowPipeline.getBindGroupLayout(0),
+            entries: [{ binding: 0, resource: fields.dustVelocity.read }]
+        }));
+        flowPass.dispatchWorkgroups(constants.gridX / 8, constants.gridY / 8, constants.gridZ / 4);
+        flowPass.end();
         debris.step(encoder, 0.5, 0);
         device.queue.submit([encoder.finish()]);
         const swept = await inspect();
         expect(swept[0] < -h, 'Fast debris tunneled through the building');
         passed('Swept collision checks stop debris crossing a building in one step');
         const reaction = await readVolume(fields.windForcing);
-        const originX = constants.gridX / 2 - 5;
-        const originZ = constants.gridZ / 2;
-        const offset = forcingRow / 2 * (2 + constants.gridY * originZ) + originX * 4;
-        expect(reaction[offset] > 0 && (reaction[offset] & 0x8000) === 0,
-            'Drag did not return positive x momentum to the air');
-        passed('Particle drag transfers opposite momentum back to the airflow');
+        expect(reaction.every(value => value === 0), 'Visual tracers added a second momentum exchange');
+        passed('Visual tracers leave momentum exchange to the two-fluid solver');
 
         debris.clear();
         const clearEncoder = device.createCommandEncoder();
@@ -154,17 +167,23 @@ async function run() {
         const cleared = await inspect();
         expect(cleared.every(value => value === 0), 'Clear left active debris behind');
         expect((await readVolume(fields.windForcing)).every(value => value === 0), 'Clear left a momentum source behind');
-        passed('Clear removes particles and their momentum source');
+        passed('Clear removes the visual tracers');
 
         const solver = new FluidSolver(fields, weather);
         solver.startShearExperiment();
-        debris.response = 0.2;
+        const settings = new URLSearchParams(location.search);
+        solver.confinement = Number(settings.get('confinement') ?? solver.confinement);
+        solver.dust.loading = Number(settings.get('loading') ?? solver.dust.loading);
+        solver.jacobiIterations = Number(settings.get('pressure') ?? solver.jacobiIterations);
+        const coupledSteps = Number(new URLSearchParams(location.search).get('steps') ?? 250);
+        expect(Number.isInteger(coupledSteps) && coupledSteps > 0, 'steps must be a positive integer');
         try {
-            for (let frame = 0; frame < 250; frame++) {
+            for (let frame = 0; frame < coupledSteps; frame++) {
                 const encoder = device.createCommandEncoder();
                 solver.step(encoder);
                 if (frame === 0) {
                     debris.seed();
+                    solver.dust.seed();
                 }
                 debris.step(encoder, solver.dt, solver.resetVersion);
                 device.queue.submit([encoder.finish()]);
@@ -174,22 +193,27 @@ async function run() {
             }
             await device.queue.onSubmittedWorkDone();
             await inspect();
-            for (const field of [fields.velocity, fields.thermo, fields.turbulence, fields.vorticity]) {
+            for (const field of [fields.velocity, fields.thermo, fields.turbulence, fields.vorticity, fields.dustVelocity]) {
                 const values = await readVolume(field.textures[field.index]);
                 expect(values.every(value => (value & 0x7c00) !== 0x7c00), 'Coupled experiment produced nonfinite fields');
             }
-            const measure = async () => {
+            const measure = async (dust = false) => {
                 const encoder = device.createCommandEncoder();
-                const report = solver.checkDivergence(encoder);
+                const report = dust ? solver.dust.checkDivergence(encoder) : solver.checkDivergence(encoder);
                 device.queue.submit([encoder.finish()]);
                 expect(report !== undefined, 'Run the GIS test with checkDivergence in the URL');
                 return report!;
             };
             await measure();
             const report = await measure();
-            console.log('Coupled shear experiment', report);
-            expect(report.rms < 5e-4 && report.nonFinite === 0, 'Coupled experiment exceeded the divergence target');
-            passed('Shear, turbulence, buildings, and debris stay finite for 250 coupled steps');
+            await measure(true);
+            const dustReport = await measure(true);
+            console.log('Coupled shear experiment', JSON.stringify({ air: report, dust: dustReport }));
+            expect(report.rms < 5e-4 && report.nonFinite === 0,
+                `Coupled air RMS ${report.rms}, nonfinite ${report.nonFinite} exceeded the target`);
+            expect(dustReport.rms < 5e-4 && dustReport.maxBlockedFaceSpeed === 0,
+                'Dust projection missed the target or crossed a solid face');
+            passed(`Air and dust stay projected around buildings for ${coupledSteps} coupled steps`);
         } finally {
             solver.destroy();
         }

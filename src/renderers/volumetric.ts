@@ -44,7 +44,8 @@ function platformQuality(): string {
 
 // The numbers match the cases in debugMarch() (raymarch.fs.wgsl)
 const DEBUG_VIEWS: Record<string, number> = {
-    off: 0, density: 1, temperature: 2, velocity: 3, vorticity: 4, obstacles: 5, bricks: 6
+    off: 0, density: 1, temperature: 2, velocity: 3, vorticity: 4, obstacles: 5, bricks: 6,
+    'dust density': 7, 'dust velocity': 8
 };
 
 // Starting scale and max value for debug views
@@ -53,7 +54,9 @@ const DEBUG_SCALES: Record<string, { value: number, max: number, unit: string }>
     densityBoosted: { value: 0.1, max: 2, unit: 'g/kg' },
     temperature: { value: 1, max: 10, unit: 'K' },          // theta'. The thermal starts at +2 K.
     velocity: { value: 5, max: 50, unit: 'm/s' },
-    vorticity: { value: 0.1, max: 1, unit: '1/s' }
+    vorticity: { value: 0.1, max: 1, unit: '1/s' },
+    'dust density': { value: 0.02, max: 0.2, unit: 'kg/m3' },
+    'dust velocity': { value: 5, max: 50, unit: 'm/s' }
 };
 
 const VOLUME_FORMAT: GPUTextureFormat = "rgba16float";
@@ -248,18 +251,20 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         if (depth !== this.boundDepth) {
             const depthView = depth.createView();
-            this.raymarchBindGroups = [0, 1, 2, 3].map(i => device.createBindGroup({
+            this.raymarchBindGroups = Array.from({ length: 16 }, (_, i) => device.createBindGroup({
                 label: `raymarch ${i}`,
                 layout: this.raymarchPipeline.getBindGroupLayout(0),
                 entries: [
                     { binding: 0, resource: { buffer: camera.uniformsBuffer } },
                     { binding: 1, resource: { buffer: this.paramsBuffer } },
-                    { binding: 2, resource: fields.thermo.view(i >> 1) },
+                    { binding: 2, resource: fields.thermo.view((i >> 1) & 1) },
                     { binding: 3, resource: this.linearSampler },
                     { binding: 4, resource: depthView },
                     { binding: 5, resource: this.brickView },
                     { binding: 6, resource: fields.velocity.view(i & 1) },
-                    { binding: 7, resource: fields.obstacleView }
+                    { binding: 7, resource: fields.obstacleView },
+                    { binding: 8, resource: fields.dustVelocity.view((i >> 2) & 1) },
+                    { binding: 9, resource: fields.dustDensity.view((i >> 3) & 1) }
                 ]
             }));
         }
@@ -322,7 +327,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const encoder = device.createCommandEncoder({ label: "frame" });
 
         solver.step(encoder);
-        // Particle drag returns momentum for the next fluid step.
+        // Tracers follow the projected dust field; the solver owns momentum exchange.
         debris.step(encoder, solver.dt, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn
@@ -345,7 +350,9 @@ export class VolumetricRenderer extends renderer.Renderer {
             }]
         });
         raymarchPass.setPipeline(this.raymarchPipeline);
-        raymarchPass.setBindGroup(0, this.raymarchBindGroups[2 * fields.thermo.index + fields.velocity.index]);
+        const fieldState = fields.velocity.index + 2 * fields.thermo.index
+            + 4 * fields.dustVelocity.index + 8 * fields.dustDensity.index;
+        raymarchPass.setBindGroup(0, this.raymarchBindGroups[fieldState]);
         raymarchPass.draw(3);
         raymarchPass.end();
 

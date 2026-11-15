@@ -39,7 +39,7 @@ export class Stage {
         await gis.connect(fields);
 
         const solver = new FluidSolver(fields, weather);
-        const debris = new Debris(fields, weather, camera);
+        const debris = new Debris(fields, camera, () => solver.dust.seed());
 
         return new Stage(site, camera, fields, weather, gis, solver, debris);
     }
