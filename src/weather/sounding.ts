@@ -1,6 +1,7 @@
 // One Open-Meteo hour, turned into the atmosphere buffer the solver already samples.
-// Open-Meteo sends °C, %, hPa and a wind direction (the direction the wind comes from).
-// The buffer matches AtmosphereSample: theta, qv, wind x, wind z, pressure, temperature, density.
+// Open-Meteo sends °C, %, hPa, and a wind direction (the direction the wind comes from).
+// Each slice matches AtmosphereSample:
+//   theta (K), qv (g/kg), wind x (m/s), wind z (m/s), pressure (Pa), temperature (K), density (kg/m^3)
 // Grid theta' and qv' stay 0, which means "this sounding", until a parcel leaves it.
 
 const PRESSURE_LEVELS_HPA = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400] as const;
@@ -11,15 +12,16 @@ const REFERENCE_PRESSURE = 100000;
 const POISSON_KAPPA = 0.2857;
 const DRY_AIR = 287.05;
 
+// One measured height, already converted to the units stored in the buffer.
 export interface SoundingPoint {
-    height: number;
-    theta: number;
-    vapor: number;
-    windX: number;
-    windZ: number;
-    pressure: number;
-    temperature: number;
-    density: number;
+    height: number;      // m above the ground
+    theta: number;       // K, potential temperature
+    vapor: number;       // g/kg
+    windX: number;       // m/s toward the east
+    windZ: number;       // m/s toward the south
+    pressure: number;    // Pa
+    temperature: number; // K
+    density: number;     // kg/m^3
 }
 
 interface OpenMeteoHourly {
@@ -37,12 +39,14 @@ function saturationVaporPressure(celsius: number): number {
     return 611.2 * Math.exp(17.67 * celsius / (celsius + 243.5));
 }
 
+// Grams of water vapor per kilogram of dry air.
 function vaporContent(celsius: number, pressure: number, relativeHumidity: number): number {
     const es = saturationVaporPressure(celsius);
     const vaporPressure = (relativeHumidity / 100) * es;
     return 0.622 * vaporPressure / Math.max(pressure - vaporPressure, 1) * 1000;
 }
 
+// Potential temperature (K): the temperature the air would have if brought to 1000 hPa.
 function potentialTemperature(kelvin: number, pressure: number): number {
     return kelvin * Math.pow(REFERENCE_PRESSURE / pressure, POISSON_KAPPA);
 }
@@ -209,13 +213,13 @@ export function syntheticColumn(slices: number, domainY: number, vaporGkg: numbe
         const temperature = 295 - 0.0065 * height;
         const pressure = 100000 * Math.pow(temperature / 295, 5.256);
         const offset = i * VALUES_PER_SLICE;
-        values[offset] = temperature * Math.pow(100000 / pressure, 0.2857);
-        values[offset + 1] = vaporGkg;
-        values[offset + 2] = windX;
-        values[offset + 3] = windZ;
-        values[offset + 4] = pressure;
-        values[offset + 5] = temperature;
-        values[offset + 6] = pressure / (287.05 * temperature);
+        values[offset] = temperature * Math.pow(100000 / pressure, 0.2857); // theta (K)
+        values[offset + 1] = vaporGkg;                                       // qv (g/kg)
+        values[offset + 2] = windX;                                          // wind x (m/s, toward east)
+        values[offset + 3] = windZ;                                          // wind z (m/s, toward south)
+        values[offset + 4] = pressure;                                       // Pa
+        values[offset + 5] = temperature;                                    // K
+        values[offset + 6] = pressure / (287.05 * temperature);              // density (kg/m^3)
     }
 
     return values;
@@ -228,13 +232,13 @@ export function atmosphereColumn(points: SoundingPoint[], slices: number, domain
     for (let i = 0; i < slices; i++) {
         const sample = sampleColumn(points, (i + 0.5) / slices * domainY);
         const offset = i * VALUES_PER_SLICE;
-        values[offset] = sample.theta;
-        values[offset + 1] = sample.vapor;
-        values[offset + 2] = sample.windX;
-        values[offset + 3] = sample.windZ;
-        values[offset + 4] = sample.pressure;
-        values[offset + 5] = sample.temperature;
-        values[offset + 6] = sample.density;
+        values[offset] = sample.theta;          // K
+        values[offset + 1] = sample.vapor;       // qv (g/kg)
+        values[offset + 2] = sample.windX;       // m/s toward the east
+        values[offset + 3] = sample.windZ;       // m/s toward the south
+        values[offset + 4] = sample.pressure;    // Pa
+        values[offset + 5] = sample.temperature; // K
+        values[offset + 6] = sample.density;     // kg/m^3
     }
 
     return values;
