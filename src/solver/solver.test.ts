@@ -207,11 +207,13 @@ async function runTests() {
     fields.setObstacles(groundMask());
 
     let solver = new FluidSolver(fields, weather);
+    solver.microphysics = undefined;
     solver.turbulence = false;
     solver.transportedVorticity = false;
     const replaceSolver = () => {
         solver.destroy();
         solver = new FluidSolver(fields, weather);
+        solver.microphysics = undefined;
         solver.turbulence = false;
         solver.transportedVorticity = false;
         return solver;

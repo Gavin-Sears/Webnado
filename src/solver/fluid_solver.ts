@@ -7,6 +7,7 @@ import { WeatherData } from '../weather/noaa_loader';
 import { DivergenceCheck, type DivergenceReport } from './divergence_check';
 import { DustFluid } from './dust_fluid';
 import { MultigridPressure, type PressureMethod } from './multigrid_pressure';
+import { WarmRain } from './warm_rain';
 
 import commonSource from './common.wgsl?raw';
 import boundarySource from './boundaries.wgsl?raw';
@@ -16,7 +17,7 @@ import forceSource from './forces.wgsl?raw';
 import tornadoSource from './tornado.wgsl?raw';
 
 export interface Microphysics {
-    // Read thermo.read, write thermo.write, then swap thermo once before returning.
+    // Leave the newest thermodynamic state in thermo.read after all passes.
     step(encoder: GPUCommandEncoder, dt: number): void;
 }
 
@@ -71,6 +72,7 @@ export class FluidSolver {
     resetVersion = 0;
     lastDivergence: DivergenceReport | undefined;
     readonly dust: DustFluid;
+    readonly warmRain: WarmRain;
 
     private readonly pressure = new PingPong('pressure', 'r32float');
     private readonly divergence = createVolume('divergence', 'r32float');
@@ -108,6 +110,8 @@ export class FluidSolver {
 
     constructor(readonly fields: Fields, readonly weather: WeatherData) {
         this.dust = new DustFluid(fields, weather, this.openBits, this.parameters);
+        this.warmRain = new WarmRain(fields, weather, this.openBitsView);
+        this.microphysics = this.warmRain;
         const source = [
             commonSource,
             boundarySource,
@@ -157,6 +161,7 @@ export class FluidSolver {
         folder.add(this, 'confinement', 0, 0.5, 0.005).name('Vorticity confinement');
         folder.add(this, 'turbulence').name('Turbulent mixing');
         folder.add(this, 'mixing', 0, 0.5, 0.01).name('Mixing coefficient');
+        folder.add(this.warmRain, 'enabled').name('Warm-rain microphysics');
         folder.add(this, 'transportedVorticity').name('Transport vorticity').onChange(() => {
             this.initializeRotation = true;
         });
@@ -253,7 +258,7 @@ export class FluidSolver {
                 0
             ], slice * 8);
         }
-        this.weather.setAtmosphere(values);
+        this.weather.setAtmosphere(values, 'Synthetic shear experiment');
         this.reset();
         this.thermalRequested = true;
     }
@@ -430,6 +435,7 @@ export class FluidSolver {
     }
 
     destroy() {
+        this.warmRain.destroy();
         this.multigrid?.destroy();
         this.dust.destroy();
         this.parameters.destroy();
