@@ -251,6 +251,7 @@ async function runTests() {
             return results;
         }
         if (resolutionName !== 'low') {
+            solver.microphysics = solver.warmRain;
             solver.turbulence = true;
             solver.transportedVorticity = true;
             seed(fields, 2);
