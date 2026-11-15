@@ -4,10 +4,10 @@ fn dustDerivative(cell: vec3i, axis: i32) -> vec3f {
         / (2.0 * cellSize[axis]);
 }
 
-fn dustViscosity(cell: vec3i) -> f32 {
+fn dustViscosity(cell: vec3i, verticalDerivative: vec3f) -> f32 {
     let height = (f32(cell.y) + 0.5) * cellSize.y;
     let mixingLength = 0.4 * height;
-    let shear = length(dustDerivative(cell, 1));
+    let shear = length(verticalDerivative);
     let coefficient = parameters.dustViscosity / parameters.grainDensity
         + mixingLength * mixingLength * shear;
     let inverseSize = 1.0 / (cellSize * cellSize);
@@ -20,10 +20,19 @@ fn buildDustViscosity(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
     if (inside(cell)) {
         var viscosity = 0.0;
+        var dx = vec3f(0);
+        var dy = vec3f(0);
+        var dz = vec3f(0);
         if (fluid(cell) && parameters.dustEnabled > 0.0) {
-            viscosity = dustViscosity(cell);
+            dx = dustDerivative(cell, 0);
+            dy = dustDerivative(cell, 1);
+            dz = dustDerivative(cell, 2);
+            viscosity = dustViscosity(cell, dy);
         }
         textureStore(scalarOut, cell, vec4f(viscosity, 0, 0, 0));
+        textureStore(dustGradientXOut, cell, vec4f(dx, 0));
+        textureStore(dustGradientYOut, cell, vec4f(dy, 0));
+        textureStore(dustGradientZOut, cell, vec4f(dz, 0));
     }
 }
 
@@ -34,11 +43,10 @@ fn dustStress(cell: vec3i, axis: i32) -> vec3f {
     }
     let viscosity = 0.5 * (textureLoad(divergenceIn, cell, 0).x + textureLoad(divergenceIn, neighbor, 0).x);
     let derivative = (centerVelocity(neighbor) - centerVelocity(cell)) / cellSize[axis];
-    var transpose = vec3f(0);
-    for (var component = 0; component < 3; component++) {
-        transpose[component] = 0.5 * (dustDerivative(cell, component)[axis]
-            + dustDerivative(neighbor, component)[axis]);
-    }
+    let dx = textureLoad(dustGradientX, cell, 0) + textureLoad(dustGradientX, neighbor, 0);
+    let dy = textureLoad(dustGradientY, cell, 0) + textureLoad(dustGradientY, neighbor, 0);
+    let dz = textureLoad(dustGradientZ, cell, 0) + textureLoad(dustGradientZ, neighbor, 0);
+    let transpose = 0.5 * vec3f(dx[axis], dy[axis], dz[axis]);
     return viscosity * (derivative + transpose);
 }
 
@@ -149,7 +157,10 @@ fn coupleDust(@builtin(global_invocation_id) id: vec3u) {
                 let slip = faceVelocity(cell, axis) - airFace(cell, axis);
                 let change = relaxation * slip / (1.0 + ratio);
                 velocity[axis] = faceVelocity(cell, axis) - change;
-                feedback[axis] = ratio * change / parameters.dt;
+                // Prescribed side winds exchange their reaction with the boundary reservoir.
+                if (axis == 1 || cell[axis] != 0) {
+                    feedback[axis] = ratio * change / parameters.dt;
+                }
             }
         }
     }

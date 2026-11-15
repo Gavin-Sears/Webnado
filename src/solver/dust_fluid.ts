@@ -11,8 +11,8 @@ import projectionSource from './projection.wgsl?raw';
 import dustSource from './dust.wgsl?raw';
 
 const bindings = {
-    buildDustViscosity: [0, 1, 3, 4, 11],
-    buildDustForce: [1, 3, 4, 10, 17],
+    buildDustViscosity: [0, 1, 3, 4, 11, 24, 26, 28],
+    buildDustForce: [1, 3, 4, 10, 17, 23, 25, 27],
     predictDust: [0, 1, 3, 4, 5, 16],
     buildDragTime: [0, 4, 11, 22],
     coupleDust: [0, 1, 3, 4, 5, 10, 19, 20, 22],
@@ -25,6 +25,7 @@ const bindings = {
 } as const;
 
 type KernelName = keyof typeof bindings;
+const pipelineCache = new WeakMap<GPUDevice, Record<KernelName, GPUComputePipeline>>();
 
 export class DustFluid {
     enabled = true;
@@ -51,6 +52,14 @@ export class DustFluid {
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
     });
     private readonly forceView = this.force.createView();
+    private readonly gradients = ['x', 'y', 'z'].map(axis => device.createTexture({
+        label: `dust velocity derivative ${axis}`,
+        dimension: '3d',
+        size: [constants.gridX, constants.gridY, constants.gridZ],
+        format: 'rgba16float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
+    }));
+    private readonly gradientViews = this.gradients.map(texture => texture.createView());
     private readonly kernels = {} as Record<KernelName, {
         pipeline: GPUComputePipeline;
         groups: Map<string, GPUBindGroup>;
@@ -71,17 +80,26 @@ export class DustFluid {
         private readonly openBits: GPUTexture,
         private readonly parameters: GPUBuffer
     ) {
-        const module = device.createShaderModule({
-            label: 'two-fluid dust dynamics',
-            code: processShaderRaw([commonSource, transportSource, projectionSource, dustSource].join('\n'))
-        });
-        for (const name of Object.keys(bindings) as KernelName[]) {
-            this.kernels[name] = {
-                pipeline: device.createComputePipeline({
+        const names = Object.keys(bindings) as KernelName[];
+        let pipelines = pipelineCache.get(device);
+        if (!pipelines) {
+            const module = device.createShaderModule({
+                label: 'two-fluid dust dynamics',
+                code: processShaderRaw([commonSource, transportSource, projectionSource, dustSource].join('\n'))
+            });
+            pipelines = {} as Record<KernelName, GPUComputePipeline>;
+            for (const name of names) {
+                pipelines[name] = device.createComputePipeline({
                     label: `dust ${name}`,
                     layout: 'auto',
                     compute: { module, entryPoint: name, constants: { dustPhase: 1 } }
-                }),
+                });
+            }
+            pipelineCache.set(device, pipelines);
+        }
+        for (const name of names) {
+            this.kernels[name] = {
+                pipeline: pipelines[name],
                 groups: new Map()
             };
         }
@@ -190,7 +208,13 @@ export class DustFluid {
             19: this.fields.windForcingView,
             20: this.fields.dustDensity.read,
             21: this.fields.dustDensity.write,
-            22: this.fields.velocity.read
+            22: this.fields.velocity.read,
+            23: this.gradientViews[0],
+            24: this.gradientViews[0],
+            25: this.gradientViews[1],
+            26: this.gradientViews[1],
+            27: this.gradientViews[2],
+            28: this.gradientViews[2]
         };
         const group = device.createBindGroup({
             label: `dust ${name}`,
@@ -218,6 +242,7 @@ export class DustFluid {
         this.pressure.textures.forEach(texture => texture.destroy());
         this.divergence.destroy();
         this.force.destroy();
+        this.gradients.forEach(texture => texture.destroy());
         this.readback?.destroy();
     }
 }

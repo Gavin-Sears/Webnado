@@ -41,6 +41,12 @@ override dustPhase: bool = false;
 @group(0) @binding(20) var dustDensityIn: texture_3d<f32>;
 @group(0) @binding(21) var dustDensityOut: texture_storage_3d<r32float, write>;
 @group(0) @binding(22) var airVelocityIn: texture_3d<f32>;
+@group(0) @binding(23) var dustGradientX: texture_3d<f32>;
+@group(0) @binding(24) var dustGradientXOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(25) var dustGradientY: texture_3d<f32>;
+@group(0) @binding(26) var dustGradientYOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(27) var dustGradientZ: texture_3d<f32>;
+@group(0) @binding(28) var dustGradientZOut: texture_storage_3d<rgba16float, write>;
 
 const fluidBit = 64u;
 

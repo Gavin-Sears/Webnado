@@ -320,7 +320,12 @@ export class Profiler {
             `frame ${frame.median.toFixed(2)} ms (${(1000 / frame.median).toFixed(0)} fps)`,
             `cpu   ${this.cpuEncode.stats().median.toFixed(3)} ms`
         ];
-        this.passes.forEach((samples, name) => lines.push(`${name} ${samples.stats().median.toFixed(3)} ms`));
+        this.passes.forEach((samples, name) => {
+            const stats = samples.stats();
+            if (stats.count > 0) {
+                lines.push(`${name} ${stats.median.toFixed(3)} ms`);
+            }
+        });
         if (!this.querySet) {
             lines.push("GPU timing unavailable");
         }
