@@ -10,8 +10,7 @@ export interface Site {
     longitude: number;
 }
 
-// Default is the location of an EF4 tornado in Greenfield Iowa on May 21, 2024
-// This doesn't really mean anything right now, and we might not even use this.
+// Greenfield, Iowa. WeatherData loads 21 May 2024, 21:00 UTC from here.
 const DEFAULT_SITE: Site = { latitude: 41.31, longitude: -94.46 };
 
 // CHECKITOUT: holds everything that outlives a renderer and connects the four sections
@@ -31,11 +30,12 @@ export class Stage {
         const fields = new Fields();
 
         const weather = new WeatherData(site);
-
         const gis = await GisTerrain.create(site);
         fields.setObstacles(gis.obstacleMaterials());
 
         const solver = new FluidSolver(fields, weather);
+        weather.onApplied = () => solver.resetAir();
+        await weather.load();
 
         return new Stage(site, camera, fields, weather, gis, solver);
     }

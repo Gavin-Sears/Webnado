@@ -11,6 +11,7 @@ import boundarySource from './boundaries.wgsl?raw';
 import projectionSource from './projection.wgsl?raw';
 import transportSource from './transport.wgsl?raw';
 import forceSource from './forces.wgsl?raw';
+import microphysicsSource from './microphysics.wgsl?raw';
 
 const kernelBindings = {
     buildOpenBits: [12, 13],
@@ -18,6 +19,8 @@ const kernelBindings = {
     curl: [1, 3, 4, 8],
     forces: [0, 1, 2, 3, 4, 5, 7],
     advect: [0, 1, 2, 3, 4, 5, 6],
+    microphysics: [0, 2, 3, 4, 6],
+    sedimentRain: [0, 2, 3, 4, 6],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
@@ -86,7 +89,8 @@ export class FluidSolver {
             boundarySource,
             projectionSource,
             transportSource,
-            forceSource
+            forceSource,
+            microphysicsSource
         ].join('\n');
         const module = device.createShaderModule({
             label: 'fluid solver',
@@ -125,6 +129,14 @@ export class FluidSolver {
         folder.add(this, 'addThermal').name('Add warm thermal');
     }
 
+    // Drop the cloud, rain, and motion already in the box. The sounding column stays.
+    // Loading a new hour calls this, so the previous hour's cloud does not hide the new wind.
+    resetAir() {
+        this.fields.velocity.clear();
+        this.fields.thermo.clear();
+        this.pressure.clear();
+    }
+
     // Encode once per frame before raymarching; the renderer submits the encoder.
     step(encoder: GPUCommandEncoder) {
         device.queue.writeBuffer(this.parameters, 0, new Float32Array([
@@ -142,6 +154,14 @@ export class FluidSolver {
 
         this.dispatch(encoder, 'advect');
         this.fields.velocity.swap();
+        this.fields.thermo.swap();
+
+        // Microphysics runs on the air that just moved. Forces already ran, so the
+        // new heat affects buoyancy next step. Sediment is its own pass because
+        // the storage texture cannot read a neighbor written in the same pass.
+        this.dispatch(encoder, 'microphysics');
+        this.fields.thermo.swap();
+        this.dispatch(encoder, 'sedimentRain');
         this.fields.thermo.swap();
 
         this.projectPressure(encoder);

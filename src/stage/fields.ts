@@ -19,10 +19,28 @@ export class PingPong {
     index = 0;
     readonly textures: GPUTexture[];    // for debug readback and copies
     private views: GPUTextureView[];
+    // r32float is 4 bytes, rgba16float is 8. Those are the only formats stored here.
+    private readonly bytesPerTexel: number;
 
     constructor(label: string, format: GPUTextureFormat) {
         this.textures = [createField(`${label} 0`, format), createField(`${label} 1`, format)];
         this.views = this.textures.map(texture => texture.createView());
+        this.bytesPerTexel = format === 'r32float' ? 4 : 8;
+        this.clear();
+    }
+
+    // A new texture is undefined, not zero. Zero theta' and qv' mean ordinary air.
+    clear() {
+        const { gridX, gridY, gridZ } = constants;
+        const zeros = new Uint8Array(gridX * gridY * gridZ * this.bytesPerTexel);
+        for (const texture of this.textures) {
+            device.queue.writeTexture(
+                { texture },
+                zeros,
+                { bytesPerRow: gridX * this.bytesPerTexel, rowsPerImage: gridY },
+                { width: gridX, height: gridY, depthOrArrayLayers: gridZ }
+            );
+        }
     }
 
     view(index: number): GPUTextureView {
