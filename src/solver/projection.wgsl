@@ -36,7 +36,7 @@ fn jacobi(@builtin(global_invocation_id) id: vec3u) {
             let axis = direction / 2;
             let positive = direction % 2 == 1;
             let sign = select(-1, 1, positive);
-            let neighbor = cell + sign * axisOffset(axis);
+            let neighbor = phaseCell(cell + sign * axisOffset(axis));
 
             if (inside(neighbor) && connection(cell, axis, positive)) {
                 let weight = 1.0 / (cellSize[axis] * cellSize[axis]);
@@ -67,7 +67,7 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
 
     for (var axis = 0; axis < 3; axis++) {
         velocity[axis] = faceVelocity(cell, axis);
-        let neighbor = cell - axisOffset(axis);
+        let neighbor = phaseCell(cell - axisOffset(axis));
 
         if (faceOpen(cell, axis) && inside(neighbor)) {
             let upper = textureLoad(pressureIn, cell, 0).x;

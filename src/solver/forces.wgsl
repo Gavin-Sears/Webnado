@@ -71,6 +71,7 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
         if (inside(neighbor)) {
             let faceForce = 0.5 * (force + centerForce(neighbor));
             velocity[axis] += parameters.dt * faceForce[axis];
+            velocity[axis] += parameters.dt * textureLoad(windForcing, cell, 0)[axis];
         }
     }
 

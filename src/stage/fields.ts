@@ -46,11 +46,13 @@ export class PingPong {
 // These formats work as storage textures on every device, unlike r8uint or rg16float.
 export class Fields {
     velocity = new PingPong("velocity", "rgba16float");
+    dustVelocity = new PingPong("dust velocity", "rgba16float");
+    dustDensity = new PingPong("dust concentration (kg/m3)", "r32float");
     thermo = new PingPong("thermo", "rgba16float");
     // Turbulence channels are k (m²/s²), viscosity and mixing (m²/s), unused.
     turbulence = new PingPong("turbulence", "rgba16float");
     vorticity = new PingPong("transported vorticity", "rgba16float");
-    readonly windForcing = createField("debris feedback acceleration", "rgba16float");
+    readonly windForcing = createField("dust feedback acceleration", "rgba16float");
     readonly windForcingView = this.windForcing.createView();
 
     private obstacle = createField("obstacle", "r32uint");

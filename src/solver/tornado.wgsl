@@ -124,7 +124,7 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
 
     var force = vec3f(0);
     if (fluid(cell)) {
-        force = textureLoad(windForcing, cell, 0).xyz + vec3f(0, buoyancyAt(cell), 0);
+        force = vec3f(0, buoyancyAt(cell), 0);
         for (var axis = 0; axis < 3; axis++) {
             let offset = axisOffset(axis);
             force += (stress(cell, axis) - stress(cell - offset, axis)) / cellSize[axis];
@@ -141,6 +141,17 @@ fn measuredCurl(cell: vec3i) -> vec3f {
     let dy = velocityDerivative(cell, 1);
     let dz = velocityDerivative(cell, 2);
     return vec3f(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
+}
+
+fn totalForceAt(cell: vec3i) -> vec3f {
+    let nearest = clamp(cell, vec3i(0), gridDims - 1);
+    var feedback = vec3f(0);
+    for (var axis = 0; axis < 3; axis++) {
+        let upper = min(nearest + axisOffset(axis), gridDims - 1);
+        feedback[axis] = 0.5 * (textureLoad(windForcing, nearest, 0)[axis]
+            + textureLoad(windForcing, upper, 0)[axis]);
+    }
+    return textureLoad(forceIn, nearest, 0).xyz + feedback;
 }
 
 @compute @workgroup_size(8, 8, 4)
@@ -161,12 +172,9 @@ fn evolveVorticity(@builtin(global_invocation_id) id: vec3u) {
         let stretching = rotation.x * velocityDerivative(cell, 0)
             + rotation.y * velocityDerivative(cell, 1)
             + rotation.z * velocityDerivative(cell, 2);
-        let fx = (scalarNeighbor(forceIn, cell, cell + vec3i(1, 0, 0)).xyz
-            - scalarNeighbor(forceIn, cell, cell - vec3i(1, 0, 0)).xyz) / (2.0 * cellSize.x);
-        let fy = (scalarNeighbor(forceIn, cell, cell + vec3i(0, 1, 0)).xyz
-            - scalarNeighbor(forceIn, cell, cell - vec3i(0, 1, 0)).xyz) / (2.0 * cellSize.y);
-        let fz = (scalarNeighbor(forceIn, cell, cell + vec3i(0, 0, 1)).xyz
-            - scalarNeighbor(forceIn, cell, cell - vec3i(0, 0, 1)).xyz) / (2.0 * cellSize.z);
+        let fx = (totalForceAt(cell + vec3i(1, 0, 0)) - totalForceAt(cell - vec3i(1, 0, 0))) / (2.0 * cellSize.x);
+        let fy = (totalForceAt(cell + vec3i(0, 1, 0)) - totalForceAt(cell - vec3i(0, 1, 0))) / (2.0 * cellSize.y);
+        let fz = (totalForceAt(cell + vec3i(0, 0, 1)) - totalForceAt(cell - vec3i(0, 0, 1))) / (2.0 * cellSize.z);
         rotation += parameters.dt * (stretching + vec3f(fy.z - fz.y, fz.x - fx.z, fx.y - fy.x));
     }
 

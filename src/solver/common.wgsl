@@ -7,7 +7,16 @@ struct SolverParameters {
     turbulence: f32,
     transportedVorticity: f32,
     initializeVorticity: f32,
+    dustEnabled: f32,
+    grainRadius: f32,
+    grainDensity: f32,
+    dustViscosity: f32,
+    seedDust: f32,
+    dustLoading: f32,
+    dustPadding: vec2f,
 }
+
+override dustPhase: bool = false;
 
 @group(0) @binding(0) var<uniform> parameters: SolverParameters;
 @group(0) @binding(1) var velocityIn: texture_3d<f32>;
@@ -29,8 +38,27 @@ struct SolverParameters {
 @group(0) @binding(17) var forceOut: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(18) var windForcing: texture_3d<f32>;
 @group(0) @binding(19) var windForcingOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(20) var dustDensityIn: texture_3d<f32>;
+@group(0) @binding(21) var dustDensityOut: texture_storage_3d<r32float, write>;
+@group(0) @binding(22) var airVelocityIn: texture_3d<f32>;
 
 const fluidBit = 64u;
+
+fn phaseCell(cell: vec3i) -> vec3i {
+    if (dustPhase) {
+        return vec3i((cell.x % gridDims.x + gridDims.x) % gridDims.x,
+            cell.y, (cell.z % gridDims.z + gridDims.z) % gridDims.z);
+    }
+    return cell;
+}
+
+fn phasePosition(position: vec3f) -> vec3f {
+    if (dustPhase) {
+        return vec3f(position.x - floor(position.x / f32(gridDims.x)) * f32(gridDims.x),
+            position.y, position.z - floor(position.z / f32(gridDims.z)) * f32(gridDims.z));
+    }
+    return position;
+}
 
 fn inside(cell: vec3i) -> bool {
     return all(cell >= vec3i(0)) && all(cell < gridDims);
@@ -52,7 +80,14 @@ fn fluid(cell: vec3i) -> bool {
 
 fn connection(cell: vec3i, axis: i32, positive: bool) -> bool {
     let bit = u32(2 * axis) + select(0u, 1u, positive);
-    return (textureLoad(openBits, cell, 0).x & (1u << bit)) != 0u;
+    let open = (textureLoad(openBits, cell, 0).x & (1u << bit)) != 0u;
+    let neighbor = cell + select(-1, 1, positive) * axisOffset(axis);
+    if (dustPhase && axis != 1 && !inside(neighbor)) {
+        let opposite = textureLoad(openBits, phaseCell(neighbor), 0).x;
+        let oppositeBit = u32(2 * axis) + select(1u, 0u, positive);
+        return open && (opposite & fluidBit) != 0u && (opposite & (1u << oppositeBit)) != 0u;
+    }
+    return open;
 }
 
 fn faceOpen(cell: vec3i, axis: i32) -> bool {
@@ -86,12 +121,12 @@ fn faceVelocity(cell: vec3i, axis: i32) -> f32 {
         return 0.0;
     }
 
-    if (axis != 1 && (cell[axis] == 0 || cell[axis] == gridDims[axis])) {
+    if (!dustPhase && axis != 1 && (cell[axis] == 0 || cell[axis] == gridDims[axis])) {
         let wind = background(f32(cell.y) + 0.5).state.zw;
         return select(wind.x, wind.y, axis == 2);
     }
 
-    return textureLoad(velocityIn, cell, 0)[axis];
+    return textureLoad(velocityIn, phaseCell(cell), 0)[axis];
 }
 
 fn centerVelocity(cell: vec3i) -> vec3f {

@@ -4,9 +4,10 @@ fn faceOffset(axis: i32) -> vec3f {
     return offset;
 }
 
-fn sampleComponent(position: vec3f, axis: i32) -> f32 {
-    if (position.x < 0.0 || position.z < 0.0
-        || position.x > f32(gridDims.x) || position.z > f32(gridDims.z)) {
+fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
+    let position = phasePosition(rawPosition);
+    if (!dustPhase && (position.x < 0.0 || position.z < 0.0
+        || position.x > f32(gridDims.x) || position.z > f32(gridDims.z))) {
         if (axis == 1) {
             return 0.0;
         }
@@ -18,7 +19,11 @@ fn sampleComponent(position: vec3f, axis: i32) -> f32 {
     var upper = vec3f(gridDims - 1);
     upper[axis] = f32(gridDims[axis]);
 
-    let coordinate = clamp(position - faceOffset(axis), vec3f(0), upper);
+    var coordinate = clamp(position - faceOffset(axis), vec3f(0), upper);
+    if (dustPhase) {
+        coordinate.x = position.x - faceOffset(axis).x;
+        coordinate.z = position.z - faceOffset(axis).z;
+    }
     let base = vec3i(floor(coordinate));
     let fraction = fract(coordinate);
     var result = 0.0;
@@ -28,7 +33,7 @@ fn sampleComponent(position: vec3f, axis: i32) -> f32 {
             for (var x = 0; x < 2; x++) {
                 let corner = vec3i(x, y, z);
                 let weight = mix(vec3f(1) - fraction, fraction, vec3f(corner));
-                result += faceVelocity(base + corner, axis) * weight.x * weight.y * weight.z;
+                result += faceVelocity(phaseCell(base + corner), axis) * weight.x * weight.y * weight.z;
             }
         }
     }
@@ -82,7 +87,7 @@ fn traceBack(position: vec3f) -> vec3f {
 
     for (var segment = 1; segment <= segments; segment++) {
         let point = mix(position, departure, f32(segment) / f32(segments));
-        let cell = vec3i(floor(point));
+        let cell = vec3i(floor(phasePosition(point)));
 
         if (!inside(cell)) {
             return departure;

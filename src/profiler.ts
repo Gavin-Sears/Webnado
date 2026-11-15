@@ -62,7 +62,7 @@ class SampleBuffer {
 
 export class Profiler {
     // Timed passes per frame, which sizes the query set and its buffers. passWrites() skips any extras.
-    private static readonly maxPasses = 16;
+    private static readonly maxPasses = 32;
     // Limit on staging buffers. resolve() drops a readback when all of them are in flight.
     private static readonly maxReadBuffers = 16;
 

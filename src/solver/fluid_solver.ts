@@ -5,6 +5,7 @@ import { constants, processShaderRaw } from '../shaders/shaders';
 import { Fields, PingPong } from '../stage/fields';
 import { WeatherData } from '../weather/noaa_loader';
 import { DivergenceCheck, type DivergenceReport } from './divergence_check';
+import { DustFluid } from './dust_fluid';
 
 import commonSource from './common.wgsl?raw';
 import boundarySource from './boundaries.wgsl?raw';
@@ -22,10 +23,10 @@ const kernelBindings = {
     buildOpenBits: [12, 13],
     enforceBoundaries: [1, 3, 4, 5],
     curl: [1, 3, 4, 8],
-    forces: [0, 1, 3, 4, 5, 7, 16],
+    forces: [0, 1, 3, 4, 5, 7, 16, 18],
     energy: [0, 1, 2, 3, 4, 14, 15],
-    atmosphericForces: [0, 1, 2, 3, 4, 14, 17, 18],
-    evolveVorticity: [0, 1, 3, 4, 7, 8, 14, 16],
+    atmosphericForces: [0, 1, 2, 3, 4, 14, 17],
+    evolveVorticity: [0, 1, 3, 4, 7, 8, 14, 16, 18],
     mixThermo: [0, 2, 3, 6, 14],
     resetFields: [4, 5, 6, 8, 15],
     clearPressure: [11],
@@ -66,6 +67,7 @@ export class FluidSolver {
     microphysics: Microphysics | undefined;
     resetVersion = 0;
     lastDivergence: DivergenceReport | undefined;
+    readonly dust: DustFluid;
 
     private readonly pressure = new PingPong('pressure', 'r32float');
     private readonly divergence = createVolume('divergence', 'r32float');
@@ -78,7 +80,7 @@ export class FluidSolver {
 
     private readonly parameters = device.createBuffer({
         label: 'solver parameters',
-        size: 32,
+        size: 64,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
@@ -101,6 +103,7 @@ export class FluidSolver {
         : undefined;
 
     constructor(readonly fields: Fields, readonly weather: WeatherData) {
+        this.dust = new DustFluid(fields, weather, this.openBits, this.parameters);
         const source = [
             commonSource,
             boundarySource,
@@ -151,11 +154,13 @@ export class FluidSolver {
         folder.add(this, 'addThermal').name('Add warm thermal');
         folder.add(this, 'startShearExperiment').name('Start shear experiment');
         folder.add(this, 'reset').name('Reset simulation');
+        this.dust.buildGui(gui);
     }
 
     // Encode once per frame before raymarching; the renderer submits the encoder.
     step(encoder: GPUCommandEncoder) {
         if (this.resetRequested) {
+            this.dust.reset(encoder);
             this.dispatch(encoder, 'clearForcing');
             this.dispatch(encoder, 'resetFields');
             this.fields.velocity.swap();
@@ -179,8 +184,10 @@ export class FluidSolver {
         ]));
         this.thermalRequested = false;
         this.initializeRotation = false;
+        this.dust.writeParameters();
 
         this.prepareBoundaries(encoder);
+        this.dust.predict(encoder);
         this.dispatch(encoder, 'energy');
         this.fields.turbulence.swap();
         this.dispatch(encoder, 'atmosphericForces');
@@ -194,6 +201,7 @@ export class FluidSolver {
         this.fields.thermo.swap();
 
         this.projectPressure(encoder);
+        this.dust.finish(encoder, this.jacobiIterations);
         this.microphysics?.step(encoder, this.dt);
         this.dispatch(encoder, 'mixThermo');
         this.fields.thermo.swap();
@@ -201,6 +209,7 @@ export class FluidSolver {
 
         if (this.steps % 120 === 1) {
             this.checkDivergence(encoder);
+            void this.dust.checkDivergence(encoder)?.catch(console.error);
         }
     }
 
@@ -209,6 +218,7 @@ export class FluidSolver {
     }
 
     reset() {
+        this.dust.clear();
         this.resetVersion++;
         this.resetRequested = true;
         this.initializeRotation = true;
@@ -402,6 +412,7 @@ export class FluidSolver {
     }
 
     destroy() {
+        this.dust.destroy();
         this.parameters.destroy();
         this.pressure.textures.forEach(texture => texture.destroy());
         this.divergence.destroy();

@@ -26,11 +26,11 @@ export class DivergenceCheck {
 
     private pending: Promise<DivergenceReport> | undefined;
 
-    constructor(private readonly readback: GPUBuffer) {}
+    constructor(private readonly readback: GPUBuffer, private readonly periodic = false) {}
 
     capture(
         encoder: GPUCommandEncoder,
-        fields: Fields,
+        fields: Pick<Fields, 'velocity'>,
         openBits: GPUTexture,
         atmosphere: GPUBuffer
     ): Promise<DivergenceReport> {
@@ -114,6 +114,19 @@ export class DivergenceCheck {
             return a + (b - a) * (slice - lower);
         };
 
+        const faceOpen = (position: number[], axis: number, positive: boolean) => {
+            const bit = 1 << (axis * 2 + Number(positive));
+            const open = (bitsAt(position[0], position[1], position[2]) & bit) !== 0;
+            if (this.periodic && axis !== 1
+                && position[axis] === (positive ? dimensions[axis] - 1 : 0)) {
+                const opposite = [...position];
+                opposite[axis] = positive ? 0 : dimensions[axis] - 1;
+                const bits = bitsAt(opposite[0], opposite[1], opposite[2]);
+                return open && (bits & 64) !== 0 && (bits & (1 << (axis * 2 + Number(!positive)))) !== 0;
+            }
+            return open;
+        };
+
         const faceAt = (x: number, y: number, z: number, axis: number) => {
             const position = [x, y, z];
 
@@ -123,7 +136,12 @@ export class DivergenceCheck {
                 }
 
                 position[axis]--;
-                const open = bitsAt(position[0], position[1], position[2]) & (1 << (axis * 2 + 1));
+                const open = faceOpen(position, axis, true);
+                if (this.periodic) {
+                    position[axis] = 0;
+                    const offset = this.velocityRow * (position[1] + gridY * position[2]) + position[0] * 8 + axis * 2;
+                    return open ? halfToFloat(data.getUint16(offset, true)) : 0;
+                }
                 return open ? windAt(y, axis) : 0;
             }
 
@@ -153,7 +171,7 @@ export class DivergenceCheck {
                             nonFinite++;
                         }
 
-                        if ((bits & (1 << (axis * 2))) === 0) {
+                        if (!faceOpen([x, y, z], axis, false)) {
                             maxBlockedFaceSpeed = Math.max(maxBlockedFaceSpeed, Math.abs(lower));
                         }
 
@@ -180,7 +198,7 @@ export class DivergenceCheck {
 
 }
 
-function halfToFloat(bits: number): number {
+export function halfToFloat(bits: number): number {
     const sign = bits & 0x8000 ? -1 : 1;
     const exponent = (bits >>> 10) & 31;
     const mantissa = bits & 1023;
