@@ -218,6 +218,36 @@ async function runTests() {
     };
 
     try {
+        const settings = new URLSearchParams(location.search);
+        if (settings.has('pressureBenchmark')) {
+            solver.pressureMethod = settings.get('method') === 'jacobi' ? 'jacobi' : 'multigrid';
+            solver.jacobiIterations = Number(settings.get('iterations') ?? 40);
+            solver.multigridCycles = Number(settings.get('cycles') ?? solver.multigridCycles);
+            seed(fields, 1);
+            let encoder = device.createCommandEncoder();
+            solver.project(encoder);
+            device.queue.submit([encoder.finish()]);
+            const cold = await measure(solver);
+            for (let frame = 0; frame < 80; frame++) {
+                seed(fields, 1);
+                const time = performance.now();
+                profiler?.beginFrame(time);
+                encoder = device.createCommandEncoder();
+                solver.project(encoder);
+                profiler?.resolve(encoder);
+                device.queue.submit([encoder.finish()]);
+                profiler?.afterSubmit();
+                profiler?.endFrame(time);
+                await device.queue.onSubmittedWorkDone();
+            }
+            const warm = await measure(solver);
+            const error = await device.popErrorScope();
+            expect(error === null, error?.message ?? 'Pressure benchmark GPU validation failed');
+            expect(warm.nonFinite === 0 && warm.maxBlockedFaceSpeed === 0, 'Pressure benchmark boundary check failed');
+            passed('Pressure benchmark completes', { method: solver.pressureMethod, cold, warm });
+            output.textContent += '\n\nAll checks passed.';
+            return results;
+        }
         if (resolutionName !== 'low') {
             solver.turbulence = true;
             solver.transportedVorticity = true;
@@ -239,8 +269,12 @@ async function runTests() {
         const resting = await measure(solver);
         expect(resting.rms === 0 && resting.nonFinite === 0, 'Resting flow did not remain zero');
         passed('Resting atmosphere stays at rest', resting);
+        const initialError = await device.popErrorScope();
+        expect(initialError === null, initialError?.message ?? 'Initial GPU validation failed');
+        device.pushErrorScope('validation');
 
         seed(fields, 1);
+        solver.pressureMethod = 'jacobi';
         solver.jacobiIterations = 41;
         let encoder = device.createCommandEncoder();
         solver.project(encoder);
@@ -264,6 +298,31 @@ async function runTests() {
         expect(projected.rms < 5e-4, 'Manufactured gradient projection missed the divergence target');
         expect(projected.maxBlockedFaceSpeed === 0, 'Projection changed blocked face velocities');
         passed('Manufactured gradient flow projects below 5e-4', projected);
+
+        replaceSolver();
+        seed(fields, 1);
+        encoder = device.createCommandEncoder();
+        solver.project(encoder);
+        device.queue.submit([encoder.finish()]);
+        const multigrid = await measure(solver);
+        expect(multigrid.rms < 5e-4 && multigrid.nonFinite === 0, 'Multigrid gradient projection missed the divergence target');
+        expect(multigrid.maxBlockedFaceSpeed === 0, 'Multigrid changed blocked face velocities');
+        passed('Multigrid removes a manufactured gradient in six V-cycles', multigrid);
+
+        seed(fields, 1);
+        solver.pressureMethod = 'jacobi';
+        solver.jacobiIterations = 1;
+        encoder = device.createCommandEncoder();
+        solver.project(encoder);
+        device.queue.submit([encoder.finish()]);
+        seed(fields, 1);
+        solver.pressureMethod = 'multigrid';
+        encoder = device.createCommandEncoder();
+        solver.project(encoder);
+        device.queue.submit([encoder.finish()]);
+        const switched = await measure(solver);
+        expect(switched.rms < multigrid.rms, 'Switching pressure methods lost the warm pressure state');
+        passed('Jacobi and multigrid share the newest pressure after switching', switched);
 
         replaceSolver();
         seed(fields, 2);
@@ -481,6 +540,23 @@ async function runTests() {
             expect(obstacleReport.maxBlockedFaceSpeed === 0, 'Changed obstacles were not applied');
             expect(obstacleReport.rms < 5e-4, 'Projection failed with disconnected fluid regions');
             passed('Obstacle changes rebuild the open bits', obstacleReport);
+
+            for (let z = 0; z < gridZ; z++) {
+                for (let y = 0; y < gridY; y++) {
+                    mask[gridX / 2 - 1 + gridX * (y + gridY * z)] = 2;
+                    mask[gridX / 2 + 1 + gridX * (y + gridY * z)] = 2;
+                    mask[gridX / 2 + gridX * (y + gridY * z)] = y === 0 ? 1 : 0;
+                }
+            }
+            fields.setObstacles(mask);
+            seed(fields, 1);
+            encoder = device.createCommandEncoder();
+            solver.project(encoder);
+            device.queue.submit([encoder.finish()]);
+            const thinWalls = await measure(solver);
+            expect(thinWalls.rms < 5e-4 && thinWalls.maxBlockedFaceSpeed === 0,
+                'Multigrid failed with walls inside coarse cells');
+            passed('Thin walls and a narrow fluid channel survive coarsening', thinWalls);
         }
 
         fields.setObstacles(new Uint8Array(constants.gridX * constants.gridY * constants.gridZ).fill(1));

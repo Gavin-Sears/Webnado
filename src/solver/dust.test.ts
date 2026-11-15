@@ -178,7 +178,7 @@ async function run() {
 
         seed(fields, 0, 0, 0.02, 1);
         encoder = device.createCommandEncoder();
-        solver.dust.finish(encoder, 1200);
+        solver.dust.finish(encoder, solver.jacobiIterations, solver.pressureMethod, solver.multigridCycles);
         device.queue.submit([encoder.finish()]);
         const measure = async () => {
             const encoder = device.createCommandEncoder();
@@ -189,9 +189,10 @@ async function run() {
         };
         await measure();
         const report = await measure();
+        console.log('Dust multigrid manufactured flow', report);
         expect(report.rms < 5e-4 && report.maxBlockedFaceSpeed === 0 && report.nonFinite === 0,
             'Independent dust projection failed');
-        passed('Dust pressure projection enforces periodic sides and solid boundaries');
+        passed('Dust multigrid enforces periodic sides and solid boundaries');
 
         encoder = device.createCommandEncoder();
         solver.dust.reset(encoder);
