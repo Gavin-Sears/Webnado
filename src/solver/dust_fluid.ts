@@ -5,6 +5,7 @@ import { constants, processShaderRaw } from '../shaders/shaders';
 import { Fields, PingPong } from '../stage/fields';
 import { WeatherData } from '../weather/noaa_loader';
 import { DivergenceCheck, type DivergenceReport } from './divergence_check';
+import { MultigridPressure, type PressureMethod } from './multigrid_pressure';
 import commonSource from './common.wgsl?raw';
 import transportSource from './transport.wgsl?raw';
 import projectionSource from './projection.wgsl?raw';
@@ -73,6 +74,7 @@ export class DustFluid {
     private readonly checker = this.readback ? new DivergenceCheck(this.readback, true) : undefined;
     private seedRequested = false;
     private resetRequested = false;
+    private multigrid: MultigridPressure | undefined;
 
     constructor(
         readonly fields: Fields,
@@ -152,23 +154,35 @@ export class DustFluid {
         this.fields.dustVelocity.swap();
     }
 
-    finish(encoder: GPUCommandEncoder, iterations: number) {
+    finish(encoder: GPUCommandEncoder, iterations: number, method: PressureMethod = 'multigrid', cycles = 6) {
         if (this.enabled) {
             this.dispatch(encoder, 'divergence');
-            const kernel = this.kernels.jacobi;
-            const pass = encoder.beginComputePass({ label: 'dust pressure', timestampWrites: profiler?.passWrites('dust pressure') });
-            pass.setPipeline(kernel.pipeline);
-            for (let iteration = 0; iteration < iterations; iteration++) {
-                pass.setBindGroup(0, this.bindGroup('jacobi'));
-                this.dispatchGrid(pass);
-                this.pressure.swap();
+            if (method === 'multigrid' && iterations > 0) {
+                this.multigrid ??= new MultigridPressure('dust multigrid', this.pressure, this.openBits.createView(), this.divergenceView, true);
+                this.multigrid.solve(encoder, this.fields.obstacleVersion, cycles);
+            } else {
+                this.solveJacobi(encoder, iterations);
             }
-            pass.end();
             this.dispatch(encoder, 'project');
             this.fields.dustVelocity.swap();
         }
         this.dispatch(encoder, 'transportDustDensity');
         this.fields.dustDensity.swap();
+    }
+
+    private solveJacobi(encoder: GPUCommandEncoder, iterations: number) {
+        const kernel = this.kernels.jacobi;
+        const pass = encoder.beginComputePass({
+            label: 'dust pressure',
+            timestampWrites: profiler?.passWrites('dust pressure')
+        });
+        pass.setPipeline(kernel.pipeline);
+        for (let iteration = 0; iteration < iterations; iteration++) {
+            pass.setBindGroup(0, this.bindGroup('jacobi'));
+            this.dispatchGrid(pass);
+            this.pressure.swap();
+        }
+        pass.end();
     }
 
     reset(encoder: GPUCommandEncoder) {
@@ -239,6 +253,7 @@ export class DustFluid {
     }
 
     destroy() {
+        this.multigrid?.destroy();
         this.pressure.textures.forEach(texture => texture.destroy());
         this.divergence.destroy();
         this.force.destroy();

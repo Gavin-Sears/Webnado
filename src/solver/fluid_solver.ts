@@ -6,6 +6,7 @@ import { Fields, PingPong } from '../stage/fields';
 import { WeatherData } from '../weather/noaa_loader';
 import { DivergenceCheck, type DivergenceReport } from './divergence_check';
 import { DustFluid } from './dust_fluid';
+import { MultigridPressure, type PressureMethod } from './multigrid_pressure';
 
 import commonSource from './common.wgsl?raw';
 import boundarySource from './boundaries.wgsl?raw';
@@ -59,6 +60,8 @@ function createVolume(label: string, format: GPUTextureFormat): GPUTexture {
 export class FluidSolver {
     dt = 0.5;
     jacobiIterations = 40;
+    pressureMethod: PressureMethod = 'multigrid';
+    multigridCycles = 6;
     buoyancy = 1;
     confinement = 0.025;
     turbulence = true;
@@ -86,6 +89,7 @@ export class FluidSolver {
 
     private readonly kernels = {} as Record<KernelName, Kernel>;
     private obstacleVersion = -1;
+    private multigrid: MultigridPressure | undefined;
     private thermalRequested = false;
     private steps = 0;
     private resetRequested = false;
@@ -143,7 +147,12 @@ export class FluidSolver {
     buildGui(gui: GUI) {
         const folder = gui.addFolder('Fluid solver');
         folder.add(this, 'dt', 0.05, 1, 0.05).name('Time step (s)');
-        folder.add(this, 'jacobiIterations', 1, 200, 1).name('Pressure iterations');
+        const jacobi = folder.add(this, 'jacobiIterations', 1, 200, 1).name('Jacobi iterations').hide();
+        const multigrid = folder.add(this, 'multigridCycles', 1, 8, 1).name('Multigrid cycles');
+        folder.add(this, 'pressureMethod', ['multigrid', 'jacobi']).name('Pressure solver').onChange(() => {
+            jacobi.show(this.pressureMethod === 'jacobi');
+            multigrid.show(this.pressureMethod === 'multigrid');
+        });
         folder.add(this, 'buoyancy', 0, 2, 0.1).name('Buoyancy');
         folder.add(this, 'confinement', 0, 0.5, 0.005).name('Vorticity confinement');
         folder.add(this, 'turbulence').name('Turbulent mixing');
@@ -201,7 +210,7 @@ export class FluidSolver {
         this.fields.thermo.swap();
 
         this.projectPressure(encoder);
-        this.dust.finish(encoder, this.jacobiIterations);
+        this.dust.finish(encoder, this.jacobiIterations, this.pressureMethod, this.multigridCycles);
         this.microphysics?.step(encoder, this.dt);
         this.dispatch(encoder, 'mixThermo');
         this.fields.thermo.swap();
@@ -278,6 +287,18 @@ export class FluidSolver {
     private projectPressure(encoder: GPUCommandEncoder) {
         this.dispatch(encoder, 'divergence');
 
+        if (this.pressureMethod === 'multigrid') {
+            this.multigrid ??= new MultigridPressure('air multigrid', this.pressure, this.openBitsView, this.divergenceView);
+            this.multigrid.solve(encoder, this.fields.obstacleVersion, this.multigridCycles);
+        } else {
+            this.solveJacobi(encoder);
+        }
+
+        this.dispatch(encoder, 'project');
+        this.fields.velocity.swap();
+    }
+
+    private solveJacobi(encoder: GPUCommandEncoder) {
         const kernel = this.kernels.jacobi;
         const pass = encoder.beginComputePass({
             label: 'jacobi',
@@ -292,9 +313,6 @@ export class FluidSolver {
         }
 
         pass.end();
-
-        this.dispatch(encoder, 'project');
-        this.fields.velocity.swap();
     }
 
     private prepareBoundaries(encoder: GPUCommandEncoder) {
@@ -412,6 +430,7 @@ export class FluidSolver {
     }
 
     destroy() {
+        this.multigrid?.destroy();
         this.dust.destroy();
         this.parameters.destroy();
         this.pressure.textures.forEach(texture => texture.destroy());

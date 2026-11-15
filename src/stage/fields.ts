@@ -3,11 +3,15 @@ import { constants } from "../shaders/shaders";
 
 const fieldUsage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
 
-function createField(label: string, format: GPUTextureFormat): GPUTexture {
+function createField(
+    label: string,
+    format: GPUTextureFormat,
+    size: GPUExtent3D = [constants.gridX, constants.gridY, constants.gridZ]
+): GPUTexture {
     return device.createTexture({
         label,
         dimension: "3d",
-        size: { width: constants.gridX, height: constants.gridY, depthOrArrayLayers: constants.gridZ },
+        size,
         format,
         usage: fieldUsage
     });
@@ -20,8 +24,15 @@ export class PingPong {
     readonly textures: GPUTexture[];    // for debug readback and copies
     private views: GPUTextureView[];
 
-    constructor(label: string, format: GPUTextureFormat) {
-        this.textures = [createField(`${label} 0`, format), createField(`${label} 1`, format)];
+    constructor(
+        label: string,
+        format: GPUTextureFormat,
+        size: GPUExtent3D = [constants.gridX, constants.gridY, constants.gridZ]
+    ) {
+        this.textures = [
+            createField(`${label} 0`, format, size),
+            createField(`${label} 1`, format, size)
+        ];
         this.views = this.textures.map(texture => texture.createView());
     }
 
