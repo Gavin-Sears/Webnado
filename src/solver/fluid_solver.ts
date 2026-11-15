@@ -95,7 +95,6 @@ export class FluidSolver {
     private thermalRequested = false;
     private steps = 0;
     private resetRequested = false;
-    private initializeRotation = true;
     private readonly divergenceReadback = new URLSearchParams(location.search).has('checkDivergence')
         ? device.createBuffer({
             label: 'solver divergence readback',
@@ -162,9 +161,7 @@ export class FluidSolver {
         folder.add(this, 'turbulence').name('Turbulent mixing');
         folder.add(this, 'mixing', 0, 0.5, 0.01).name('Mixing coefficient');
         folder.add(this.warmRain, 'enabled').name('Warm-rain microphysics');
-        folder.add(this, 'transportedVorticity').name('Transport vorticity').onChange(() => {
-            this.initializeRotation = true;
-        });
+        folder.add(this, 'transportedVorticity').name('Transport vorticity');
         folder.add(this, 'addThermal').name('Add warm thermal');
         folder.add(this, 'startShearExperiment').name('Start shear experiment');
         folder.add(this, 'reset').name('Reset simulation');
@@ -194,10 +191,9 @@ export class FluidSolver {
             this.mixing,
             Number(this.turbulence),
             Number(this.transportedVorticity),
-            Number(this.initializeRotation)
+            0
         ]));
         this.thermalRequested = false;
-        this.initializeRotation = false;
         this.dust.writeParameters();
 
         this.prepareBoundaries(encoder);
@@ -205,8 +201,13 @@ export class FluidSolver {
         this.dispatch(encoder, 'energy');
         this.fields.turbulence.swap();
         this.dispatch(encoder, 'atmosphericForces');
-        this.dispatch(encoder, this.transportedVorticity ? 'evolveVorticity' : 'curl');
+        // Anchor the predictor to velocity so transport errors cannot accumulate into confinement forces.
+        this.dispatch(encoder, 'curl');
         this.fields.vorticity.swap();
+        if (this.transportedVorticity) {
+            this.dispatch(encoder, 'evolveVorticity');
+            this.fields.vorticity.swap();
+        }
         this.dispatch(encoder, 'forces');
         this.fields.velocity.swap();
 
@@ -235,7 +236,6 @@ export class FluidSolver {
         this.dust.clear();
         this.resetVersion++;
         this.resetRequested = true;
-        this.initializeRotation = true;
         this.thermalRequested = false;
         this.steps = 0;
     }

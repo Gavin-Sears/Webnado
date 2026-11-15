@@ -136,13 +136,6 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
     textureStore(forceOut, cell, vec4f(force, 0));
 }
 
-fn measuredCurl(cell: vec3i) -> vec3f {
-    let dx = velocityDerivative(cell, 0);
-    let dy = velocityDerivative(cell, 1);
-    let dz = velocityDerivative(cell, 2);
-    return vec3f(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
-}
-
 fn totalForceAt(cell: vec3i) -> vec3f {
     let nearest = clamp(cell, vec3i(0), gridDims - 1);
     var feedback = vec3f(0);
@@ -165,9 +158,6 @@ fn evolveVorticity(@builtin(global_invocation_id) id: vec3u) {
     if (fluid(cell)) {
         let position = vec3f(cell) + vec3f(0.5);
         rotation = sampleDynamic(vorticityIn, traceBack(position)).xyz;
-        if (parameters.initializeVorticity > 0.0) {
-            rotation = measuredCurl(cell);
-        }
 
         let stretching = rotation.x * velocityDerivative(cell, 0)
             + rotation.y * velocityDerivative(cell, 1)

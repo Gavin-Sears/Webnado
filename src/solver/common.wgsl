@@ -6,7 +6,7 @@ struct SolverParameters {
     mixing: f32,
     turbulence: f32,
     transportedVorticity: f32,
-    initializeVorticity: f32,
+    vorticityPadding: f32,
     dustEnabled: f32,
     grainRadius: f32,
     grainDensity: f32,
