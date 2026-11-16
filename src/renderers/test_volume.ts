@@ -2,7 +2,7 @@ import * as renderer from "../renderer";
 import * as shaders from "../shaders/shaders";
 import { Fields } from "../stage/fields";
 
-const TEST_VOLUME: keyof typeof TEST_VOLUMES | "none" = "none";
+export const TEST_VOLUME: keyof typeof TEST_VOLUMES | "none" = "none";
 const TEST_VOLUMES = { ellipsoid: 0, fbm: 1 };
 
 export function fillTestVolume(fields: Fields) {

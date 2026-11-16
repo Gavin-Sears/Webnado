@@ -3,7 +3,8 @@ import { GUI } from 'lil-gui';
 import * as renderer from '../renderer';
 import * as shaders from '../shaders/shaders';
 import { Stage } from '../stage/stage';
-import { fillTestVolume } from './test_volume';
+import { fillTestVolume, TEST_VOLUME } from './test_volume';
+import blueNoiseUrl from '../assets/blue_noise_64.png';
 
 // Draws the clouds in fields.thermo over the Three.js scene. Each frame, draw() runs gis.render(camera),
 // solver.step(encoder), then three passes of its own:
@@ -57,7 +58,7 @@ const DEBUG_SCALES: Record<string, { value: number, max: number, unit: string }>
 };
 
 const VOLUME_FORMAT: GPUTextureFormat = "rgba16float";
-const PARAMS_SIZE = 96; // RaymarchParams in raymarch.fs.wgsl
+const PARAMS_SIZE = 112; // RaymarchParams in raymarch.fs.wgsl
 
 const { gridX, gridY, gridZ, brickSize } = shaders.constants;
 const BRICK_DIMS: [number, number, number] = [gridX / brickSize, gridY / brickSize, gridZ / brickSize];
@@ -78,7 +79,14 @@ export class VolumetricRenderer extends renderer.Renderer {
     };
     shadowDistance = 6000;      // meters
     brickSkipping = true;
-    animateJitter = false;      // M3: turn on once temporal reprojection averages the noise over frames
+    animateJitter = false;
+    blueNoiseToggle = true;
+    multipleScattering = {
+        octaves: 3,             // degree of detail we use to approximate scattering. 1 is for single scattering
+        attenuation: 0.5,       // shadow optical depth multiplier per octave (should be <= contribution)
+        contribution: 0.5,      // light multiplier per octave
+        eccentricity: 0.5,      // phase g multiplier per octave
+    }
     debugView = 'off';
     debugScale = 1;
     debugBoost = false;         // density view: makes faint cloud visible
@@ -105,9 +113,14 @@ export class VolumetricRenderer extends renderer.Renderer {
     // Rebuilt when a resize changes the textures they hold
     private boundColor: GPUTexture | undefined;
     private boundDepth: GPUTexture | undefined;
+    private boundBlueNoise: GPUTexture | undefined;
     private boundVolume: GPUTexture | undefined;
     private raymarchBindGroups: GPUBindGroup[] = [];    // by 2 * thermo.index + velocity.index
     private compositeBindGroup: GPUBindGroup | undefined;
+
+    private blueNoiseTexture: GPUTexture;
+    private blueNoiseView: GPUTextureView;
+    private blueNoiseLoaded = false;
 
     constructor(stage: Stage) {
         super(stage);
@@ -164,7 +177,44 @@ export class VolumetricRenderer extends renderer.Renderer {
             ]
         }));
 
+        this.blueNoiseTexture = this.createBlueNoiseTexture(1, 1);
+        this.blueNoiseView = this.blueNoiseTexture.createView();
+        this.loadBlueNoise();
+
         fillTestVolume(stage.fields);
+    }
+
+    private createBlueNoiseTexture(width: number, height: number): GPUTexture {
+        return renderer.device.createTexture({
+            label: "blue noise",
+            size: { width, height },
+            format: "rgba8unorm",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+        });
+    }
+
+    private async loadBlueNoise() {
+        try {
+            const response = await fetch(blueNoiseUrl);
+            const bitmap = await createImageBitmap(
+                await response.blob(), 
+                { 
+                    colorSpaceConversion: 'none',
+                    premultiplyAlpha: 'none'
+                }
+            );
+            const texture = this.createBlueNoiseTexture(bitmap.width, bitmap.height);
+            renderer.device.queue.copyExternalImageToTexture({ source: bitmap }, { texture }, [bitmap.width, bitmap.height]);
+            bitmap.close();
+
+            this.blueNoiseTexture.destroy();
+            this.blueNoiseTexture = texture;
+            this.blueNoiseView = texture.createView();
+
+            this.blueNoiseLoaded = true;
+        } catch (error) {
+            console.warn('Blue noise failed to load, using interleaved gradient noise', error);
+        }
     }
 
     buildGui(gui: GUI) {
@@ -182,6 +232,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         quality.add(this, 'shadowDistance', 500, 12800, 100).name('shadow distance (m)');
         quality.add(this, 'brickSkipping').name('brick skipping');
         quality.add(this, 'animateJitter').name('animate jitter');
+        quality.add(this, 'blueNoiseToggle').name('blue noise jitter');
 
         const lighting = folder.addFolder('Lighting');
         lighting.add(this.lighting, 'sunAzimuth', -180, 180, 1).name('sun azimuth');
@@ -192,6 +243,12 @@ export class VolumetricRenderer extends renderer.Renderer {
         lighting.add(this.lighting, 'ambientIntensity', 0, 2, 0.05).name('ambient intensity');
         lighting.add(this.lighting, 'phaseG', -0.9, 0.9, 0.01).name('phase g');
         lighting.add(this.lighting, 'extinction', 0.0002, 0.01, 0.0001);
+
+        const scattering = folder.addFolder('Multiple scattering');
+        scattering.add(this.multipleScattering, 'octaves', 1, 8, 1);
+        scattering.add(this.multipleScattering, 'attenuation', 0, 1, 0.01);
+        scattering.add(this.multipleScattering, 'contribution', 0, 1, 0.01);
+        scattering.add(this.multipleScattering, 'eccentricity', 0, 1, 0.01);
 
         const debug = folder.addFolder('Debug');
         const view = debug.add(this, 'debugView', Object.keys(DEBUG_VIEWS)).name('view');
@@ -219,6 +276,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         this.volumeTexture = undefined;
         this.brickTexture.destroy();
         this.paramsBuffer.destroy();
+        this.blueNoiseTexture.destroy();
     }
 
     private updateVolumeTarget() {
@@ -246,7 +304,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const color = gis.sceneColorTexture;
         const depth = gis.sceneDepthTexture;
 
-        if (depth !== this.boundDepth) {
+        if (depth !== this.boundDepth || this.blueNoiseTexture !== this.boundBlueNoise) {
             const depthView = depth.createView();
             this.raymarchBindGroups = [0, 1, 2, 3].map(i => device.createBindGroup({
                 label: `raymarch ${i}`,
@@ -259,7 +317,8 @@ export class VolumetricRenderer extends renderer.Renderer {
                     { binding: 4, resource: depthView },
                     { binding: 5, resource: this.brickView },
                     { binding: 6, resource: fields.velocity.view(i & 1) },
-                    { binding: 7, resource: fields.obstacleView }
+                    { binding: 7, resource: fields.obstacleView },
+                    { binding: 8, resource: this.blueNoiseView }
                 ]
             }));
         }
@@ -279,6 +338,7 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         this.boundColor = color;
         this.boundDepth = depth;
+        this.boundBlueNoise = this.blueNoiseTexture;
         this.boundVolume = this.volumeTexture;
     }
 
@@ -306,6 +366,12 @@ export class VolumetricRenderer extends renderer.Renderer {
         u[19] = DEBUG_VIEWS[this.debugView];
         f[20] = this.debugScale;
         u[21] = this.debugBoost ? 1 : 0;
+        const ms = this.multipleScattering;
+        u[22] = Math.max(1, Math.round(ms.octaves));
+        f[23] = ms.attenuation;
+        f[24] = ms.contribution;
+        f[25] = ms.eccentricity;
+        u[26] = this.blueNoiseToggle && this.blueNoiseLoaded ? 1 : 0;
         renderer.device.queue.writeBuffer(this.paramsBuffer, 0, this.paramsData);
     }
 
@@ -321,7 +387,8 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         const encoder = device.createCommandEncoder({ label: "frame" });
 
-        solver.step(encoder);
+        if (TEST_VOLUME === "none")
+            solver.step(encoder);
 
         // After the solver, so the bricks match the thermo being drawn
         if (this.brickSkipping || this.debugView === 'bricks') {

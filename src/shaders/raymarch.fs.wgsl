@@ -17,7 +17,12 @@ struct RaymarchParams {
     brickSkipping: u32,
     debugView: u32,
     debugScale: f32,
-    debugBoost: u32         // density view: 1 makes faint cloud visible
+    debugBoost: u32,         // density view: 1 makes faint cloud visible
+    msOctaves: u32,
+    msAttenuation: f32,
+    msContribution: f32,
+    msEccentricity: f32,
+    blueNoiseToggle: u32
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -28,6 +33,7 @@ struct RaymarchParams {
 @group(0) @binding(5) var brickMax: texture_3d<f32>;   // largest qc + qr near each brick (bricks.cs.wgsl)
 @group(0) @binding(6) var velocity: texture_3d<f32>;   // debug views only
 @group(0) @binding(7) var obstacle: texture_3d<u32>;   // debug views only
+@group(0) @binding(8) var blueNoise: texture_2d<f32>;  // tiling blue noise, 0-1 range in r
 
 const pi = 3.14159265;
 const earlyExitTransmittance = 0.01;
@@ -54,21 +60,33 @@ fn henyeyGreenstein(cosTheta: f32, g: f32) -> f32 {
 // LIGHT
 // =====
 
-// Fraction of sunlight that reaches a point. offset (0 to 1) shifts the samples within their steps.
-// Texture sampling with light volumes might replace this soon.
-fn sunTransmittance(world: vec3f, offset: f32) -> f32 {
+// Optical depth (unitless) between a point and the sun. 
+// exp(-depth) is the fraction of sunlight that arrives.
+fn sunOpticalDepth(world: vec3f, offset: f32) -> f32 {
     let distance = min(intersectDomain(world, params.sunDir).y, params.shadowDistance);
     let stepSize = distance / f32(params.shadowSteps);
     var opticalDepth = 0.0;
     for (var i = 0u; i < params.shadowSteps; i++) {
         opticalDepth += extinctionAt(world + params.sunDir * ((f32(i) + offset) * stepSize));
     }
-    return exp(-opticalDepth * stepSize);
+    return opticalDepth * stepSize;
 }
 
+const maxOctaves = 8u;
+
 // Sun lighting and shadows
-fn inScattered(world: vec3f, sunPhase: f32, shadowOffset: f32) -> vec3f {
-    return params.sunColor * sunPhase * sunTransmittance(world, shadowOffset) + params.ambientColor;
+// additional octaves are dimmer (contribution), see thinner shadows (attenuation), and scatter more evenly (eccentricity)
+fn inScattered(world: vec3f, phases: array<f32, maxOctaves>, shadowOffset: f32) -> vec3f {
+    let depth = sunOpticalDepth(world, shadowOffset);
+    var sun = 0.0;
+    var contribution = 1.0;
+    var attenuation = 1.0;
+    for (var i = 0u; i < min(params.msOctaves, maxOctaves); i++) {
+        sun += contribution * phases[i] * exp(-depth * attenuation);
+        contribution *= params.msContribution;
+        attenuation *= params.msAttenuation;
+    }
+    return params.sunColor * sun + params.ambientColor;
 }
 
 // RAYS
@@ -101,8 +119,20 @@ fn stepsToLeave(brick: vec3i, origin: vec3f, invDir: vec3f, t: f32, stepSize: f3
     return max(ceil((tExit - t) / stepSize), 1.0);
 }
 
-// Interleaved gradient noise (Jimenez 2014), 0 to 1 per pixel.
+// Uses blue or interleaved noise, changes each frame if jitter is animated
 fn jitterAt(pixel: vec2f) -> f32 {
+    let frame = camera.frameIndex % params.jitterFrames;
+    if (params.blueNoiseToggle != 0u) {
+        let size = vec2u(textureDimensions(blueNoise));
+        let noise = textureLoad(blueNoise, vec2u(pixel) % size, 0).r;
+
+        // Adding the golden ratio each frame puts each pixel's 
+        // new value in one of the largest gaps between its earlier ones.
+        // You'll see the golden ratio used in other places for analogous reasons,
+        // but thought it would be worth explaining at least once.
+        return fract(noise + f32(frame) * 0.618034);
+    }
+    // Interleaved gradient noise (Jimenez 2014)
     let p = pixel + 5.588238 * f32(camera.frameIndex % params.jitterFrames);
     return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715))));
 }
@@ -111,7 +141,15 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
     // StepSize becomes larger if we can't reach the end
     let stepSize = max(params.stepCells * cellSize.x, (tEnd - tStart) / f32(params.maxSteps));
     let invDir = safeInverse(dir);
-    let sunPhase = 4.0 * pi * henyeyGreenstein(dot(dir, params.sunDir), params.phaseG);
+
+    let cosTheta = dot(dir, params.sunDir);
+    var phases: array<f32, maxOctaves>;
+    var g = params.phaseG;
+    for (var i = 0u; i < maxOctaves; i++) {
+        // note that we multiply by 4pi so that even scattering evaluates to 1.0
+        phases[i] = 4.0 * pi * henyeyGreenstein(cosTheta, g);
+        g *= params.msEccentricity;
+    }
 
     var t = tStart + jitter * stepSize;
     var light = vec3f(0.0);
@@ -138,7 +176,7 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             // Clouds barely absorb light, so the light a step blocks is the light it scatters
             // That fraction is at most 1, so long steps can't over-brighten (Hillaire 2015).
             // Dust will eventually require albedo
-            light += transmittance * inScattered(world, sunPhase, shadowOffset) * (1.0 - stepTransmittance);
+            light += transmittance * inScattered(world, phases, shadowOffset) * (1.0 - stepTransmittance);
             transmittance *= stepTransmittance;
             if (transmittance < earlyExitTransmittance) {
                 break;
