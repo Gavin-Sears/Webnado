@@ -3,6 +3,8 @@ import { GUI } from "lil-gui";
 import { device } from "../renderer";
 import { constants } from "../shaders/shaders";
 import type { Site } from "../stage/stage";
+import { cm1Atmosphere } from './cm1_sounding';
+import elRenoSounding from './cases/elreno-2011.txt?raw';
 import {
     atmosphereColumn,
     hourlyNames,
@@ -29,6 +31,7 @@ export class WeatherData {
     date = "2024-05-21";
     hour = 21;
     status = "Standard atmosphere, until a sounding loads.";
+    scenario: 'weather' | 'elreno' = 'weather';
 
     private loading = false;
     private request: AbortController | undefined;
@@ -152,6 +155,14 @@ export class WeatherData {
         this.applySynthetic(1, 0, 0, "Synthetic · dry · no wind");
     }
 
+    useElReno() {
+        this.applyColumn(
+            cm1Atmosphere(elRenoSounding, constants.atmosphereSlices, constants.domainY),
+            'El Reno 24 May 2011 · published RUC environment',
+            'elreno'
+        );
+    }
+
     // Air moves toward +X. The ground turns part of that wind up and down.
     useEastWind() {
         this.applySynthetic(1, 20, 0, "Synthetic · dry · 20 m/s toward the east");
@@ -168,8 +179,9 @@ export class WeatherData {
         );
     }
 
-    private applyColumn(values: Float32Array, status: string) {
+    private applyColumn(values: Float32Array, status: string, scenario: 'weather' | 'elreno' = 'weather') {
         this.setAtmosphere(values, status);
+        this.scenario = scenario;
         this.onApplied();
     }
 

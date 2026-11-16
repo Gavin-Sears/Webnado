@@ -1,0 +1,9 @@
+{
+    "name": "24 May 2011 El Reno RUC proximity sounding",
+    "source": "https://github.com/abkenyon/HutsonWeiss2022/blob/main/ruc_pert_soundings/ruc_control",
+    "study": "https://doi.org/10.1175/MWR-D-22-0288.1",
+    "retrieved": "2026-11-15",
+    "description": "Original control environment supplied by the study authors. It defines a horizontally homogeneous environment, not a three-dimensional reconstruction or a guaranteed tornado forecast.",
+    "header": ["surface pressure (hPa)", "potential temperature (K)", "water vapor (g/kg)"],
+    "columns": ["height (m)", "potential temperature (K)", "water vapor (g/kg)", "eastward wind (m/s)", "northward wind (m/s)"]
+}
