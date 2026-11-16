@@ -4,7 +4,7 @@ fn faceOffset(axis: i32) -> vec3f {
     return offset;
 }
 
-fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
+fn sampleFieldComponent(field: texture_3d<f32>, rawPosition: vec3f, axis: i32) -> f32 {
     let position = phasePosition(rawPosition);
     if (!dustPhase && (position.x < 0.0 || position.z < 0.0
         || position.x > f32(gridDims.x) || position.z > f32(gridDims.z))) {
@@ -26,7 +26,7 @@ fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
     }
     let base = vec3i(floor(coordinate));
     let fraction = fract(coordinate);
-    let reference = faceVelocity(phaseCell(base), axis);
+    let reference = fieldFaceVelocity(field, phaseCell(base), axis);
     var correction = 0.0;
 
     for (var z = 0; z < 2; z++) {
@@ -34,7 +34,7 @@ fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
             for (var x = 0; x < 2; x++) {
                 let corner = vec3i(x, y, z);
                 let weight = mix(vec3f(1) - fraction, fraction, vec3f(corner));
-                correction += (faceVelocity(phaseCell(base + corner), axis) - reference)
+                correction += (fieldFaceVelocity(field, phaseCell(base + corner), axis) - reference)
                     * weight.x * weight.y * weight.z;
             }
         }
@@ -43,15 +43,23 @@ fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
     return reference + correction;
 }
 
-fn sampleVelocity(position: vec3f) -> vec3f {
+fn sampleComponent(position: vec3f, axis: i32) -> f32 {
+    return sampleFieldComponent(velocityIn, position, axis);
+}
+
+fn sampleFieldVelocity(field: texture_3d<f32>, position: vec3f) -> vec3f {
     return vec3f(
-        sampleComponent(position, 0),
-        sampleComponent(position, 1),
-        sampleComponent(position, 2)
+        sampleFieldComponent(field, position, 0),
+        sampleFieldComponent(field, position, 1),
+        sampleFieldComponent(field, position, 2)
     );
 }
 
-fn sampleThermo(position: vec3f) -> vec4f {
+fn sampleVelocity(position: vec3f) -> vec3f {
+    return sampleFieldVelocity(velocityIn, position);
+}
+
+fn sampleThermoField(field: texture_3d<f32>, position: vec3f) -> vec4f {
     if (any(position < vec3f(0)) || any(position >= vec3f(gridDims))) {
         return vec4f(0);
     }
@@ -71,7 +79,7 @@ fn sampleThermo(position: vec3f) -> vec4f {
                 if (fluid(cell)) {
                     let weight = mix(vec3f(1) - fraction, fraction, vec3f(corner));
                     let contribution = weight.x * weight.y * weight.z;
-                    result += textureLoad(thermoIn, cell, 0) * contribution;
+                    result += textureLoad(field, cell, 0) * contribution;
                     totalWeight += contribution;
                 }
             }
@@ -81,9 +89,13 @@ fn sampleThermo(position: vec3f) -> vec4f {
     return result / max(totalWeight, 1e-6);
 }
 
-fn traceBack(position: vec3f) -> vec3f {
-    let midpoint = position - 0.5 * parameters.dt * sampleVelocity(position) / cellSize;
-    let departure = position - parameters.dt * sampleVelocity(midpoint) / cellSize;
+fn sampleThermo(position: vec3f) -> vec4f {
+    return sampleThermoField(thermoIn, position);
+}
+
+fn traceField(field: texture_3d<f32>, position: vec3f, dt: f32) -> vec3f {
+    let midpoint = position - 0.5 * dt * sampleFieldVelocity(field, position) / cellSize;
+    let departure = position - dt * sampleFieldVelocity(field, midpoint) / cellSize;
     let segments = max(1, i32(ceil(length(departure - position) * 2.0)));
     var previous = position;
 
@@ -103,6 +115,10 @@ fn traceBack(position: vec3f) -> vec3f {
     }
 
     return departure;
+}
+
+fn traceBack(position: vec3f) -> vec3f {
+    return traceField(velocityIn, position, parameters.dt);
 }
 
 @compute @workgroup_size(8, 8, 4)

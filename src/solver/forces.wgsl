@@ -35,6 +35,10 @@ fn centerForce(cell: vec3i) -> vec3f {
         return vec3f(0);
     }
 
+    if (parameters.confinement == 0.0) {
+        return textureLoad(forceIn, cell, 0).xyz;
+    }
+
     var gradient = vec3f(0);
 
     for (var axis = 0; axis < 3; axis++) {

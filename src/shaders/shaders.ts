@@ -17,6 +17,7 @@ import testVolumeComputeRaw from './test_volume.cs.wgsl?raw';
 export const resolutions: Record<string, [number, number, number]> = {
     low: [64, 32, 64],
     medium: [128, 64, 128],
+    balanced: [192, 96, 192],
     high: [256, 128, 256]
 };
 
@@ -26,7 +27,8 @@ const [gridX, gridY, gridZ] = resolutions[resolutionName];
 export const domains = {
     storm: [12800, 6400, 12800],
     local: [3200, 1600, 3200],
-    supercell: [64000, 18000, 64000]
+    supercell: [64000, 18000, 64000],
+    'storm-focus': [32000, 18000, 32000]
 } as const;
 const requestedDomain = new URLSearchParams(window.location.search).get('domain')
     ?? (new URLSearchParams(window.location.search).get('case') === 'elreno' ? 'supercell' : 'storm');
@@ -44,8 +46,8 @@ export const constants = {
     domainY,
     domainZ,
 
-    atmosphereSlices: domainName === 'supercell' ? 256 : 64,
-    freeSlipGround: Number(domainName === 'supercell'),
+    atmosphereSlices: domainName === 'supercell' || domainName === 'storm-focus' ? 256 : 64,
+    freeSlipGround: Number(domainName === 'supercell' || domainName === 'storm-focus'),
 
     brickSize: 8    // cells per side of a brick, for skipping empty space
 };

@@ -1,10 +1,11 @@
 import { GUI } from "lil-gui";
 
 import { device } from "../renderer";
-import { constants } from "../shaders/shaders";
+import { constants, domainName } from "../shaders/shaders";
 import type { Site } from "../stage/stage";
 import { cm1Atmosphere } from './cm1_sounding';
 import elRenoSounding from './cases/elreno-2011.txt?raw';
+import elRenoMetadata from './cases/elreno-2011.source.json';
 import {
     atmosphereColumn,
     hourlyNames,
@@ -157,13 +158,17 @@ export class WeatherData {
 
     useElReno() {
         const column = cm1Atmosphere(elRenoSounding, constants.atmosphereSlices, constants.domainY);
+        const frame = new URLSearchParams(location.search).get('frame')
+            ?? (domainName === 'storm-focus' ? 'bunkers' : 'reference');
+        const motion = frame === 'bunkers'
+            ? elRenoMetadata.estimated_storm_motion : elRenoMetadata.simulation_frame;
         for (let offset = 0; offset < column.length; offset += VALUES_PER_SLICE) {
-            column[offset + 2] -= 16.49;
-            column[offset + 3] += 16.52;
+            column[offset + 2] -= motion.eastward_translation_m_per_s;
+            column[offset + 3] += motion.northward_translation_m_per_s;
         }
         this.applyColumn(
             column,
-            'El Reno 24 May 2011 · storm-relative RUC environment',
+            `El Reno 24 May 2011 · ${frame} storm-relative frame`,
             'elreno'
         );
     }

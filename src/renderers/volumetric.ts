@@ -375,6 +375,7 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         profiler?.resolve(encoder);
         device.queue.submit([encoder.finish()]);
+        solver.storm.observe(fields);
         profiler?.afterSubmit();
     }
 }

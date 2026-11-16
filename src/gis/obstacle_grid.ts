@@ -12,6 +12,9 @@ export class ObstacleGrid {
     private readonly origin = new Vector3(-constants.domainX / 2, 0, -constants.domainZ / 2);
 
     constructor() {
+        if (constants.freeSlipGround) {
+            return;
+        }
         const { gridX, gridY, gridZ } = constants;
         for (let z = 0; z < gridZ; z++) {
             this.materials.fill(1, gridX * gridY * z, gridX * gridY * z + gridX);

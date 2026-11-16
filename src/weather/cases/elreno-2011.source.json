@@ -4,9 +4,15 @@
     "study": "https://doi.org/10.1175/MWR-D-22-0288.1",
     "retrieved": "2026-11-15",
     "simulation_frame": {
-        "eastward_translation_m_per_s": 16.49,
-        "northward_translation_m_per_s": 16.52,
-        "method": "Bunkers right-moving storm estimate, independently calculated with MetPy from the hydrostatic control profile. The experimental flat ground uses free-slip conditions."
+        "eastward_translation_m_per_s": 15,
+        "northward_translation_m_per_s": 6,
+        "method": "Translation from the authors' namelist.input_control. The experimental flat ground uses free-slip conditions."
+    },
+    "estimated_storm_motion": {
+        "eastward_translation_m_per_s": 16.49461585418616,
+        "northward_translation_m_per_s": 16.520293078483594,
+        "method": "Bunkers right-moving storm motion, calculated with MetPy 1.7.1 from this reconstructed control profile.",
+        "reference": "https://unidata.github.io/MetPy/latest/api/generated/metpy.calc.bunkers_storm_motion.html"
     },
     "description": "Original control environment supplied by the study authors. It defines a horizontally homogeneous environment, not a three-dimensional reconstruction or a guaranteed tornado forecast.",
     "header": ["surface pressure (hPa)", "potential temperature (K)", "water vapor (g/kg)"],

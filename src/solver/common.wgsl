@@ -1,3 +1,5 @@
+const freeSlipGround = ${freeSlipGround} != 0;
+
 struct SolverParameters {
     dt: f32,
     buoyancy: f32,
@@ -133,7 +135,7 @@ fn background(height: f32) -> AtmosphereSample {
     );
 }
 
-fn faceVelocity(cell: vec3i, axis: i32) -> f32 {
+fn fieldFaceVelocity(field: texture_3d<f32>, cell: vec3i, axis: i32) -> f32 {
     if (!faceOpen(cell, axis)) {
         return 0.0;
     }
@@ -143,14 +145,18 @@ fn faceVelocity(cell: vec3i, axis: i32) -> f32 {
         return select(wind.x, wind.y, axis == 2);
     }
 
-    return textureLoad(velocityIn, phaseCell(cell), 0)[axis];
+    return textureLoad(field, phaseCell(cell), 0)[axis];
+}
+
+fn faceVelocity(cell: vec3i, axis: i32) -> f32 {
+    return fieldFaceVelocity(velocityIn, cell, axis);
 }
 
 fn centerVelocity(cell: vec3i) -> vec3f {
     var nearest = clamp(cell, vec3i(0), gridDims - 1);
-    let reflected = freeSlipGround && cell.y < 1;
+    let reflected = freeSlipGround && cell.y < 0;
     if (reflected) {
-        nearest.y = 1;
+        nearest.y = 0;
     }
     var velocity = vec3f(0);
 

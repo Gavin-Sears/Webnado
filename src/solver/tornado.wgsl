@@ -1,4 +1,25 @@
 @compute @workgroup_size(8, 8, 4)
+fn shiftStormWindow(@builtin(global_invocation_id) id: vec3u) {
+    let cell = vec3i(id);
+    if (!inside(cell)) {
+        return;
+    }
+    let source = cell + vec3i(i32(storm.region.z), 0, i32(storm.region.w));
+    let wind = background(f32(cell.y) + 0.5).state.zw;
+    var velocity = vec4f(wind.x, 0, wind.y, 0);
+    var thermo = vec4f(0);
+    var energyValue = vec4f(0);
+    if (inside(source)) {
+        velocity = textureLoad(velocityIn, source, 0);
+        thermo = textureLoad(thermoIn, source, 0);
+        energyValue = textureLoad(turbulenceIn, source, 0);
+    }
+    textureStore(velocityOut, cell, velocity);
+    textureStore(thermoOut, cell, thermo);
+    textureStore(turbulenceOut, cell, energyValue);
+}
+
+@compute @workgroup_size(8, 8, 4)
 fn buildVelocityGradients(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
     if (!inside(cell)) {
@@ -142,7 +163,7 @@ fn stress(rawCell: vec3i, axis: i32) -> vec3f {
     return viscosity * (derivative + transpose);
 }
 
-@compute @workgroup_size(8, 8, 4)
+@compute @workgroup_size(4, 4, 4)
 fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
     if (!inside(cell)) {
@@ -171,8 +192,9 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
             let radius = vec3f(storm.region.x, storm.region.y, storm.region.x);
             let distance = length((world - vec3f(0, storm.region.y, 0)) / radius);
             let shape = pow(max(0.0, cos(min(distance, 1.0) * 1.5707963)), 2.0);
-            let fade = 1.0 - smoothstep(0.75 * storm.timing.z, storm.timing.z, storm.timing.y);
-            force.y += fade * shape * max(storm.timing.w - velocity.y, 0.0) / 60.0;
+            let fade = 1.0 - clamp((storm.timing.y - 0.75 * storm.timing.z) / (0.25 * storm.timing.z), 0.0, 1.0);
+            let rate = (1.0 - exp(-0.5 * fade * parameters.dt)) / parameters.dt;
+            force.y += rate * max(storm.timing.w * shape - velocity.y, 0.0);
         }
     }
     textureStore(forceOut, cell, vec4f(force, 0));

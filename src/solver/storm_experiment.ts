@@ -1,14 +1,31 @@
 import { GUI } from 'lil-gui';
 
 import { device } from '../renderer';
+import { constants } from '../shaders/shaders';
+import type { Fields } from '../stage/fields';
+import { StormDiagnostics, type StormReport } from './storm_diagnostics';
 
 export class StormExperiment {
     enabled = false;
     elapsed = 0;
-    liftDuration = 600;
+    liftDuration = 1200;
     liftSpeed = 10;
-    radius = 5000;
-    liftHeight = 2000;
+    radius = 10000;
+    liftHeight = 1500;
+    highOrder = true;
+    followStorm = new URLSearchParams(location.search).get('follow') === '1';
+    windowEast = 0;
+    windowNorth = 0;
+    shiftX = 0;
+    shiftZ = 0;
+    phase = 'Off';
+    updraft = 0;
+    surfaceVorticity = 0;
+    divergence = 0;
+
+    private diagnostics: StormDiagnostics | undefined;
+    private pending = false;
+    private sampledAt = -Infinity;
 
     readonly buffer = device.createBuffer({
         label: 'atmospheric experiment',
@@ -16,22 +33,73 @@ export class StormExperiment {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    buildGui(gui: GUI, start: () => void) {
+    buildGui(gui: GUI, start: (domain: 'supercell' | 'storm-focus') => void) {
         const folder = gui.addFolder('Atmospheric storm');
-        folder.add({ start }, 'start').name('Start El Reno experiment');
+        folder.add({ start: () => start('supercell') }, 'start').name('El Reno: full storm domain');
+        folder.add({ start: () => start('storm-focus') }, 'start').name('El Reno: cropped storm window');
         folder.add(this, 'elapsed').name('Simulated seconds').listen().disable();
+        folder.add(this, 'phase').name('Phase').listen().disable();
+        folder.add(this, 'updraft').name('Peak updraft (m/s)').listen().disable();
+        folder.add(this, 'surfaceVorticity').name('Core rotation below 1 km (1/s)').listen().disable();
+        folder.add(this, 'divergence').name('Interior divergence RMS (1/s)').listen().disable();
         folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
         folder.add(this, 'liftSpeed', 1, 20, 1).name('Initial updraft (m/s)');
+        folder.add(this, 'highOrder').name('Higher-order advection');
+        folder.add(this, 'followStorm').name('Move window (experimental)');
+        folder.add(this, 'windowEast').name('Window east offset (m)').listen().disable();
+        folder.add(this, 'windowNorth').name('Window north offset (m)').listen().disable();
     }
 
     write(dt: number) {
         device.queue.writeBuffer(this.buffer, 0, new Float32Array([
             Number(this.enabled), this.elapsed, this.liftDuration, this.liftSpeed,
-            this.radius, this.liftHeight, 0, 0,
-            14000, 1 / 300, 0, 0
+            this.radius, this.liftHeight, this.shiftX, this.shiftZ,
+            Math.min(14000, 0.8 * constants.domainY), 1 / 300, 0, 0
         ]));
         if (this.enabled) {
             this.elapsed += dt;
         }
+        this.phase = !this.enabled ? 'Off' : this.elapsed < this.liftDuration ? 'Initial lifting' : 'Free evolution';
+    }
+
+    observe(fields: Fields) {
+        if (!this.enabled || this.pending || this.elapsed - this.sampledAt < 60) {
+            return;
+        }
+        this.diagnostics ??= new StormDiagnostics();
+        this.pending = true;
+        this.sampledAt = this.elapsed;
+        void this.diagnostics.measure(fields, this.elapsed).then(report => {
+            this.updraft = report.updraft;
+            this.surfaceVorticity = report.surfaceVorticity;
+            this.divergence = report.divergenceRms;
+            this.track(report);
+        }).catch(error => console.error('Storm diagnostics failed', error)).finally(() => {
+            this.pending = false;
+        });
+    }
+
+    track(report: StormReport) {
+        if (!this.followStorm || report.seconds < this.liftDuration || report.rotatingUpdraftScore <= 0) {
+            return;
+        }
+        const [x, , z] = report.updraftLocation;
+        this.shiftX = Math.abs(x) > 0.2 * constants.domainX
+            ? Math.round(x * constants.gridX / constants.domainX) : 0;
+        this.shiftZ = Math.abs(z) > 0.2 * constants.domainZ
+            ? Math.round(z * constants.gridZ / constants.domainZ) : 0;
+    }
+
+    resetTracking() {
+        this.shiftX = 0;
+        this.shiftZ = 0;
+        this.windowEast = 0;
+        this.windowNorth = 0;
+        this.sampledAt = -Infinity;
+    }
+
+    destroy() {
+        this.buffer.destroy();
+        this.diagnostics?.destroy();
     }
 }

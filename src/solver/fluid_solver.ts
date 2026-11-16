@@ -16,6 +16,7 @@ import projectionSource from './projection.wgsl?raw';
 import transportSource from './transport.wgsl?raw';
 import forceSource from './forces.wgsl?raw';
 import tornadoSource from './tornado.wgsl?raw';
+import correctionSource from './advection_correction.wgsl?raw';
 
 export interface Microphysics {
     // Leave the newest thermodynamic state in thermo.read after all passes.
@@ -36,6 +37,8 @@ const kernelBindings = {
     clearPressure: [11],
     clearForcing: [19],
     advect: [0, 1, 2, 3, 4, 5, 6, 29],
+    correctAdvection: [0, 1, 2, 3, 4, 5, 6, 7, 16],
+    shiftStormWindow: [1, 2, 4, 5, 6, 14, 15, 29],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
@@ -56,7 +59,7 @@ function createVolume(label: string, format: GPUTextureFormat): GPUTexture {
         format,
         usage: GPUTextureUsage.TEXTURE_BINDING
             | GPUTextureUsage.STORAGE_BINDING
-            | GPUTextureUsage.COPY_SRC
+            | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST
     });
 }
 
@@ -70,6 +73,7 @@ export class FluidSolver {
     turbulence = true;
     transportedVorticity = true;
     mixing = 0.1;
+    paused = false;
     microphysics: Microphysics | undefined;
     resetVersion = 0;
     lastDivergence: DivergenceReport | undefined;
@@ -120,7 +124,8 @@ export class FluidSolver {
             projectionSource,
             transportSource,
             forceSource,
-            tornadoSource
+            tornadoSource,
+            correctionSource
         ].join('\n');
         const module = device.createShaderModule({
             label: 'fluid solver',
@@ -153,6 +158,7 @@ export class FluidSolver {
     buildGui(gui: GUI) {
         const folder = gui.addFolder('Fluid solver');
         folder.add(this, 'dt', 0.05, 1, 0.05).name('Time step (s)');
+        folder.add(this, 'paused').name('Pause simulation');
         const jacobi = folder.add(this, 'jacobiIterations', 1, 200, 1).name('Jacobi iterations').hide();
         const multigrid = folder.add(this, 'multigridCycles', 1, 8, 1).name('Multigrid cycles');
         folder.add(this, 'pressureMethod', ['multigrid', 'jacobi']).name('Pressure solver').onChange(() => {
@@ -168,10 +174,17 @@ export class FluidSolver {
         folder.add(this, 'addThermal').name('Add warm thermal');
         folder.add(this, 'startShearExperiment').name('Start shear experiment');
         folder.add(this, 'reset').name('Reset simulation');
-        this.storm.buildGui(gui, () => {
+        this.storm.buildGui(gui, domain => {
             const url = new URL(window.location.href);
-            url.searchParams.set('domain', 'supercell');
+            url.searchParams.set('domain', domain);
+            url.searchParams.set('frame', domain === 'storm-focus' ? 'bunkers' : 'reference');
+            url.searchParams.delete('follow');
+            if (domain === 'storm-focus') {
+                url.searchParams.set('res', 'balanced');
+            }
             url.searchParams.set('case', 'elreno');
+            url.searchParams.set('lift', String(this.storm.liftSpeed));
+            url.searchParams.set('duration', String(this.storm.liftDuration));
             window.location.href = url.href;
         });
         this.dust.buildGui(gui);
@@ -179,6 +192,12 @@ export class FluidSolver {
 
     // Encode once per frame before raymarching; the renderer submits the encoder.
     step(encoder: GPUCommandEncoder) {
+        if (this.paused && !this.resetRequested) {
+            return;
+        }
+        if (this.dust.enabled) {
+            this.fields.enableDustFields();
+        }
         if (this.resetRequested) {
             this.dust.reset(encoder);
             this.dispatch(encoder, 'clearForcing');
@@ -192,6 +211,10 @@ export class FluidSolver {
             this.dispatch(encoder, 'clearPressure');
             this.resetRequested = false;
         }
+        if (this.paused) {
+            return;
+        }
+        const highOrder = this.storm.enabled && this.storm.highOrder && !this.thermalRequested;
         device.queue.writeBuffer(this.parameters, 0, new Float32Array([
             this.dt,
             this.buoyancy,
@@ -204,7 +227,26 @@ export class FluidSolver {
         ]));
         this.thermalRequested = false;
         this.dust.writeParameters();
+        if (this.fields.hasObstacles || this.dust.enabled || !this.storm.followStorm) {
+            this.storm.shiftX = 0;
+            this.storm.shiftZ = 0;
+        }
         this.storm.write(this.dt);
+
+        if (this.storm.enabled && (this.storm.shiftX || this.storm.shiftZ)) {
+            // Integer-cell translation follows the storm without changing its velocity or circulation.
+            this.dispatch(encoder, 'shiftStormWindow');
+            this.fields.velocity.swap();
+            this.fields.thermo.swap();
+            this.fields.turbulence.swap();
+            this.storm.windowEast += this.storm.shiftX * constants.domainX / constants.gridX;
+            this.storm.windowNorth -= this.storm.shiftZ * constants.domainZ / constants.gridZ;
+            this.storm.shiftX = 0;
+            this.storm.shiftZ = 0;
+            this.dispatch(encoder, 'clearPressure');
+            this.pressure.swap();
+            this.dispatch(encoder, 'clearPressure');
+        }
 
         this.prepareBoundaries(encoder);
         this.dust.predict(encoder);
@@ -213,19 +255,38 @@ export class FluidSolver {
         this.dispatch(encoder, 'energy');
         this.fields.turbulence.swap();
         this.dispatch(encoder, 'atmosphericForces');
-        // Anchor the predictor to velocity so transport errors cannot accumulate into confinement forces.
-        this.dispatch(encoder, 'curl');
-        this.fields.vorticity.swap();
-        if (this.transportedVorticity) {
-            this.dispatch(encoder, 'evolveVorticity');
+        if (this.confinement !== 0) {
+            // Anchor the predictor to velocity so transport errors cannot accumulate into confinement forces.
+            this.dispatch(encoder, 'curl');
             this.fields.vorticity.swap();
+            if (this.transportedVorticity) {
+                this.dispatch(encoder, 'evolveVorticity');
+                this.fields.vorticity.swap();
+            }
         }
         this.dispatch(encoder, 'forces');
         this.fields.velocity.swap();
 
+        if (highOrder) {
+            const size = [constants.gridX, constants.gridY, constants.gridZ];
+            encoder.copyTextureToTexture(
+                { texture: this.fields.velocity.textures[this.fields.velocity.index] },
+                { texture: this.atmosphericForce }, size
+            );
+            encoder.copyTextureToTexture(
+                { texture: this.fields.thermo.textures[this.fields.thermo.index] },
+                { texture: this.fields.vorticity.textures[1 - this.fields.vorticity.index] }, size
+            );
+        }
         this.dispatch(encoder, 'advect');
         this.fields.velocity.swap();
         this.fields.thermo.swap();
+
+        if (highOrder) {
+            this.dispatch(encoder, 'correctAdvection');
+            this.fields.velocity.swap();
+            this.fields.thermo.swap();
+        }
 
         this.projectPressure(encoder);
         this.dust.finish(encoder, this.jacobiIterations, this.pressureMethod, this.multigridCycles);
@@ -252,6 +313,7 @@ export class FluidSolver {
         this.thermalRequested = false;
         this.steps = 0;
         this.storm.elapsed = 0;
+        this.storm.resetTracking();
         if (this.weather.scenario !== 'elreno') {
             this.storm.enabled = false;
         }
@@ -263,6 +325,11 @@ export class FluidSolver {
         this.storm.enabled = true;
         this.dust.enabled = false;
         this.confinement = 0;
+        this.storm.radius = Math.min(10000, 0.3 * constants.domainX);
+        this.storm.liftHeight = Math.min(1500, 0.2 * constants.domainY);
+        const query = new URLSearchParams(location.search);
+        this.storm.liftSpeed = Math.max(0, Math.min(20, Number(query.get('lift') ?? 10)));
+        this.storm.liftDuration = Math.max(60, Math.min(1200, Number(query.get('duration') ?? 1200)));
     }
 
     startShearExperiment() {
@@ -409,7 +476,7 @@ export class FluidSolver {
             4: { buffer: this.weather.atmosphereBuffer },
             5: this.fields.velocity.write,
             6: this.fields.thermo.write,
-            7: this.fields.vorticity.read,
+            7: name === 'correctAdvection' ? this.fields.vorticity.write : this.fields.vorticity.read,
             8: this.fields.vorticity.write,
             9: this.pressure.read,
             10: this.divergenceView,
@@ -453,20 +520,21 @@ export class FluidSolver {
 
         pass.setPipeline(kernel.pipeline);
         pass.setBindGroup(0, this.bindGroup(name));
-        this.dispatchGrid(pass);
+        this.dispatchGrid(pass, name);
         pass.end();
     }
 
-    private dispatchGrid(pass: GPUComputePassEncoder) {
+    private dispatchGrid(pass: GPUComputePassEncoder, name?: KernelName) {
+        const width = name === 'atmosphericForces' ? 4 : 8;
         pass.dispatchWorkgroups(
-            Math.ceil(constants.gridX / 8),
-            Math.ceil(constants.gridY / 8),
+            Math.ceil(constants.gridX / width),
+            Math.ceil(constants.gridY / width),
             Math.ceil(constants.gridZ / 4)
         );
     }
 
     destroy() {
-        this.storm.buffer.destroy();
+        this.storm.destroy();
         this.warmRain.destroy();
         this.multigrid?.destroy();
         this.dust.destroy();
