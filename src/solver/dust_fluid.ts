@@ -22,7 +22,8 @@ const bindings = {
     jacobi: [3, 9, 10, 11],
     project: [1, 3, 4, 5, 9],
     resetDust: [5, 21],
-    clearDustPressure: [11]
+    clearDustPressure: [11],
+    clearDustFeedback: [19]
 } as const;
 
 type KernelName = keyof typeof bindings;
@@ -140,6 +141,9 @@ export class DustFluid {
         if (this.resetRequested) {
             this.reset(encoder);
         }
+        if (!this.enabled) {
+            return;
+        }
         // Reuse the divergence scratch for viscosity before the pressure solve.
         this.dispatch(encoder, 'buildDustViscosity');
         this.dispatch(encoder, 'buildDustForce');
@@ -155,6 +159,9 @@ export class DustFluid {
     }
 
     finish(encoder: GPUCommandEncoder, iterations: number, method: PressureMethod = 'multigrid', cycles = 6) {
+        if (!this.enabled) {
+            return;
+        }
         if (this.enabled) {
             this.dispatch(encoder, 'divergence');
             if (method === 'multigrid' && iterations > 0) {
@@ -186,6 +193,7 @@ export class DustFluid {
     }
 
     reset(encoder: GPUCommandEncoder) {
+        this.dispatch(encoder, 'clearDustFeedback');
         this.dispatch(encoder, 'resetDust');
         this.fields.dustVelocity.swap();
         this.fields.dustDensity.swap();

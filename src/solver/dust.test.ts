@@ -218,6 +218,18 @@ async function run() {
         expect(leftMass > 0.1 * initialMass, 'Dust did not cross the periodic side');
         passed('Dust concentration crosses periodic sides and preserves mass in uniform flow');
 
+        solver.dust.enabled = false;
+        solver.dust.clear();
+        encoder = device.createCommandEncoder();
+        solver.dust.predict(encoder);
+        solver.dust.finish(encoder, solver.jacobiIterations);
+        device.queue.submit([encoder.finish()]);
+        const emptyDust = await readTexture(fields.dustDensity.textures[fields.dustDensity.index]);
+        const emptyFeedback = await readTexture(fields.windForcing);
+        expect(emptyDust.every(value => value === 0) && emptyFeedback.every(value => value === 0),
+            'Disabling dust left concentration or feedback behind');
+        passed('Disabled dust clears its physical state and feedback before skipping work');
+
         await device.queue.onSubmittedWorkDone();
         const error = await device.popErrorScope();
         expect(error === null, error?.message ?? 'GPU validation failed');

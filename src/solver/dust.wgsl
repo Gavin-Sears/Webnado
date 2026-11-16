@@ -224,6 +224,13 @@ fn resetDust(@builtin(global_invocation_id) id: vec3u) {
 }
 
 @compute @workgroup_size(8, 8, 4)
+fn clearDustFeedback(@builtin(global_invocation_id) id: vec3u) {
+    if (inside(vec3i(id))) {
+        textureStore(windForcingOut, vec3i(id), vec4f(0));
+    }
+}
+
+@compute @workgroup_size(8, 8, 4)
 fn clearDustPressure(@builtin(global_invocation_id) id: vec3u) {
     if (inside(vec3i(id))) {
         textureStore(scalarOut, vec3i(id), vec4f(0));
