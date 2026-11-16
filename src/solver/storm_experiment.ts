@@ -30,6 +30,7 @@ export class StormExperiment {
     divergence = 0;
     rotatingWind = 0;
     rotatingWindRadius = 0;
+    rotatingWindHeight = 0;
 
     private diagnostics: StormDiagnostics | undefined;
     private pending = false;
@@ -63,6 +64,7 @@ export class StormExperiment {
         folder.add(this, 'cloudOverheadSwirl').name('Ground swirl under rising cloud (1/s)').listen().disable();
         folder.add(this, 'rotatingWind').name('Ring-mean rotating wind (m/s)').listen().disable();
         folder.add(this, 'rotatingWindRadius').name('Measured ring radius (m)').listen().disable();
+        folder.add(this, 'rotatingWindHeight').name('Wind height above floor (m)').listen().disable();
         folder.add(this, 'divergence').name('Constraint error RMS (1/s)').listen().disable();
         if (!this.weatherDriven) {
             folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
@@ -106,6 +108,7 @@ export class StormExperiment {
             this.divergence = report.divergenceRms;
             this.rotatingWind = report.rotatingWind;
             this.rotatingWindRadius = report.rotatingWindRadius;
+            this.rotatingWindHeight = report.rotatingWindHeight;
             this.track(report);
         }).catch(error => console.error('Storm diagnostics failed', error)).finally(() => {
             this.pending = false;
@@ -128,6 +131,7 @@ export class StormExperiment {
         this.groundSwirl = 0;
         this.rotatingWind = 0;
         this.rotatingWindRadius = 0;
+        this.rotatingWindHeight = 0;
         this.rotationLocation = undefined;
         this.cloudOverheadSwirl = 0;
         this.cloudRotationLocation = undefined;

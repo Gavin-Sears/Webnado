@@ -30,6 +30,7 @@ export interface StormReport {
     massWeighted: boolean;
     rotatingWind: number;
     rotatingWindRadius: number;
+    rotatingWindHeight: number;
 }
 
 export class StormDiagnostics {
@@ -130,6 +131,7 @@ export class StormDiagnostics {
             massWeighted: Boolean(constants.anelasticAir),
             rotatingWind: Math.abs(strongest.tangential),
             rotatingWindRadius: strongest.radius,
+            rotatingWindHeight: strongest.radius > 0 ? core[1] : 0,
             lowestSampleHeight: (constants.freeSlipGround ? 0.5 : 1.5) * constants.domainY / constants.gridY
         };
     }

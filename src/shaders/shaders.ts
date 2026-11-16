@@ -18,7 +18,10 @@ export const resolutions: Record<string, [number, number, number]> = {
     low: [64, 32, 64],
     medium: [128, 64, 128],
     balanced: [192, 96, 192],
-    high: [256, 128, 256]
+    high: [256, 128, 256],
+    fine: [384, 128, 384],
+    vertical: [256, 256, 256],
+    dense: [320, 192, 320]
 };
 
 const requestedResolution = new URLSearchParams(window.location.search).get('res') ?? 'medium';
