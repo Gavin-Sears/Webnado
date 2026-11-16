@@ -29,6 +29,20 @@ const bindings = {
 type KernelName = keyof typeof bindings;
 const pipelineCache = new WeakMap<GPUDevice, Record<KernelName, GPUComputePipeline>>();
 
+function createDustStorage() {
+    const pressure = new PingPong('dust pressure', 'r32float');
+    const textures = ['r32float', 'rgba16float', 'rgba16float', 'rgba16float', 'rgba16float']
+        .map((format, index) => device.createTexture({
+            label: `dust scratch ${index}`,
+            dimension: '3d',
+            size: [constants.gridX, constants.gridY, constants.gridZ],
+            format: format as GPUTextureFormat,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
+        }));
+    const views = textures.map(texture => texture.createView());
+    return { pressure, textures, divergenceView: views[0], forceView: views[1], gradientViews: views.slice(2) };
+}
+
 export class DustFluid {
     enabled = true;
     grainRadiusMicrons = 71;
@@ -37,31 +51,11 @@ export class DustFluid {
     loading = 0.02;
     lastDivergence: DivergenceReport | undefined;
 
-    private readonly pressure = new PingPong('dust pressure', 'r32float');
-    private readonly divergence = device.createTexture({
-        label: 'dust divergence',
-        dimension: '3d',
-        size: [constants.gridX, constants.gridY, constants.gridZ],
-        format: 'r32float',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
-    });
-    private readonly divergenceView = this.divergence.createView();
-    private readonly force = device.createTexture({
-        label: 'dust force',
-        dimension: '3d',
-        size: [constants.gridX, constants.gridY, constants.gridZ],
-        format: 'rgba16float',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
-    });
-    private readonly forceView = this.force.createView();
-    private readonly gradients = ['x', 'y', 'z'].map(axis => device.createTexture({
-        label: `dust velocity derivative ${axis}`,
-        dimension: '3d',
-        size: [constants.gridX, constants.gridY, constants.gridZ],
-        format: 'rgba16float',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
-    }));
-    private readonly gradientViews = this.gradients.map(texture => texture.createView());
+    private allocation: ReturnType<typeof createDustStorage> | undefined;
+
+    private get storage() {
+        return this.allocation ??= createDustStorage();
+    }
     private readonly kernels = {} as Record<KernelName, {
         pipeline: GPUComputePipeline;
         groups: Map<string, GPUBindGroup>;
@@ -165,7 +159,8 @@ export class DustFluid {
         if (this.enabled) {
             this.dispatch(encoder, 'divergence');
             if (method === 'multigrid' && iterations > 0) {
-                this.multigrid ??= new MultigridPressure('dust multigrid', this.pressure, this.openBits.createView(), this.divergenceView, true);
+                this.multigrid ??= new MultigridPressure('dust multigrid', this.storage.pressure,
+                    this.openBits.createView(), this.storage.divergenceView, true);
                 this.multigrid.solve(encoder, this.fields.obstacleVersion, cycles);
             } else {
                 this.solveJacobi(encoder, iterations);
@@ -187,7 +182,7 @@ export class DustFluid {
         for (let iteration = 0; iteration < iterations; iteration++) {
             pass.setBindGroup(0, this.bindGroup('jacobi'));
             this.dispatchGrid(pass);
-            this.pressure.swap();
+            this.storage.pressure.swap();
         }
         pass.end();
     }
@@ -197,9 +192,11 @@ export class DustFluid {
         this.dispatch(encoder, 'resetDust');
         this.fields.dustVelocity.swap();
         this.fields.dustDensity.swap();
-        this.dispatch(encoder, 'clearDustPressure');
-        this.pressure.swap();
-        this.dispatch(encoder, 'clearDustPressure');
+        if (this.allocation) {
+            this.dispatch(encoder, 'clearDustPressure');
+            this.allocation.pressure.swap();
+            this.dispatch(encoder, 'clearDustPressure');
+        }
         this.resetRequested = false;
     }
 
@@ -211,37 +208,38 @@ export class DustFluid {
 
     private bindGroup(name: KernelName) {
         const kernel = this.kernels[name];
-        const key = `${this.fields.dustVelocity.index}/${this.fields.dustDensity.index}/${this.fields.velocity.index}/${this.pressure.index}`;
+        const key = `${this.fields.dustVelocity.index}/${this.fields.dustDensity.index}/${this.fields.velocity.index}/${this.allocation?.pressure.index ?? 0}`;
         const cached = kernel.groups.get(key);
         if (cached) {
             return cached;
         }
-        const resources: Record<number, GPUBindingResource> = {
-            0: { buffer: this.parameters },
-            1: this.fields.dustVelocity.read,
-            3: this.openBits.createView(),
-            4: { buffer: this.weather.atmosphereBuffer },
-            5: this.fields.dustVelocity.write,
-            9: this.pressure.read,
-            10: this.divergenceView,
-            11: ['divergence', 'buildDustViscosity', 'buildDragTime'].includes(name) ? this.divergenceView : this.pressure.write,
-            16: this.forceView,
-            17: this.forceView,
-            19: this.fields.windForcingView,
-            20: this.fields.dustDensity.read,
-            21: this.fields.dustDensity.write,
-            22: this.fields.velocity.read,
-            23: this.gradientViews[0],
-            24: this.gradientViews[0],
-            25: this.gradientViews[1],
-            26: this.gradientViews[1],
-            27: this.gradientViews[2],
-            28: this.gradientViews[2]
+        const resources: Record<number, () => GPUBindingResource> = {
+            0: () => ({ buffer: this.parameters }),
+            1: () => this.fields.dustVelocity.read,
+            3: () => this.openBits.createView(),
+            4: () => ({ buffer: this.weather.atmosphereBuffer }),
+            5: () => this.fields.dustVelocity.write,
+            9: () => this.storage.pressure.read,
+            10: () => this.storage.divergenceView,
+            11: () => ['divergence', 'buildDustViscosity', 'buildDragTime'].includes(name)
+                ? this.storage.divergenceView : this.storage.pressure.write,
+            16: () => this.storage.forceView,
+            17: () => this.storage.forceView,
+            19: () => this.fields.windForcingView,
+            20: () => this.fields.dustDensity.read,
+            21: () => this.fields.dustDensity.write,
+            22: () => this.fields.velocity.read,
+            23: () => this.storage.gradientViews[0],
+            24: () => this.storage.gradientViews[0],
+            25: () => this.storage.gradientViews[1],
+            26: () => this.storage.gradientViews[1],
+            27: () => this.storage.gradientViews[2],
+            28: () => this.storage.gradientViews[2]
         };
         const group = device.createBindGroup({
             label: `dust ${name}`,
             layout: kernel.pipeline.getBindGroupLayout(0),
-            entries: bindings[name].map(binding => ({ binding, resource: resources[binding] }))
+            entries: bindings[name].map(binding => ({ binding, resource: resources[binding]() }))
         });
         kernel.groups.set(key, group);
         return group;
@@ -262,10 +260,8 @@ export class DustFluid {
 
     destroy() {
         this.multigrid?.destroy();
-        this.pressure.textures.forEach(texture => texture.destroy());
-        this.divergence.destroy();
-        this.force.destroy();
-        this.gradients.forEach(texture => texture.destroy());
+        this.allocation?.pressure.textures.forEach(texture => texture.destroy());
+        this.allocation?.textures.forEach(texture => texture.destroy());
         this.readback?.destroy();
     }
 }
