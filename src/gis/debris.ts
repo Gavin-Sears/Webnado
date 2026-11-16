@@ -26,7 +26,8 @@ export class Debris {
     });
     private readonly updatePipeline: GPUComputePipeline;
     private readonly renderPipeline: GPURenderPipeline;
-    private readonly updateGroups: GPUBindGroup[];
+    private updateGroups: GPUBindGroup[];
+    private dustStorageVersion: number;
     private renderGroup: GPUBindGroup | undefined;
     private depthTexture: GPUTexture | undefined;
     private spawnRequested = false;
@@ -46,13 +47,18 @@ export class Debris {
             vertex: { module, entryPoint: 'debrisVertex' },
             fragment: { module, entryPoint: 'debrisFragment', targets: [{ format: canvasFormat }] }
         });
-        this.updateGroups = [0, 1].map(index => device.createBindGroup({
+        this.updateGroups = this.createUpdateGroups();
+        this.dustStorageVersion = fields.dustStorageVersion;
+    }
+
+    private createUpdateGroups() {
+        return [0, 1].map(index => device.createBindGroup({
             layout: this.updatePipeline.getBindGroupLayout(0),
             entries: [
                 { binding: 0, resource: { buffer: this.parameters } },
                 { binding: 1, resource: { buffer: this.particles } },
-                { binding: 2, resource: fields.dustVelocity.view(index) },
-                { binding: 3, resource: fields.obstacleView }
+                { binding: 2, resource: this.fields.dustVelocity.view(index) },
+                { binding: 3, resource: this.fields.obstacleView }
             ]
         }));
     }
@@ -78,6 +84,10 @@ export class Debris {
     }
 
     step(encoder: GPUCommandEncoder, dt: number, resetVersion: number) {
+        if (this.dustStorageVersion !== this.fields.dustStorageVersion) {
+            this.updateGroups = this.createUpdateGroups();
+            this.dustStorageVersion = this.fields.dustStorageVersion;
+        }
         if (resetVersion !== this.resetVersion) {
             this.clearRequested = true;
             this.resetVersion = resetVersion;

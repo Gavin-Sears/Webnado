@@ -137,6 +137,9 @@ export class DustFluid {
     }
 
     predict(encoder: GPUCommandEncoder) {
+        if (this.enabled) {
+            this.fields.enableDustFields();
+        }
         if (this.resetRequested) {
             this.reset(encoder);
         }
@@ -152,6 +155,7 @@ export class DustFluid {
     }
 
     couple(encoder: GPUCommandEncoder) {
+        this.fields.enableDustFields();
         this.dispatch(encoder, 'buildDragTime');
         this.dispatch(encoder, 'coupleDust');
         this.fields.dustVelocity.swap();
@@ -193,6 +197,9 @@ export class DustFluid {
     }
 
     reset(encoder: GPUCommandEncoder) {
+        if (this.enabled) {
+            this.fields.enableDustFields();
+        }
         this.dispatch(encoder, 'clearDustFeedback');
         this.dispatch(encoder, 'resetDust');
         this.fields.dustVelocity.swap();
@@ -206,6 +213,9 @@ export class DustFluid {
     }
 
     checkDivergence(encoder: GPUCommandEncoder) {
+        if (!this.enabled) {
+            return;
+        }
         const result = this.checker?.capture(encoder, { velocity: this.fields.dustVelocity }, this.openBits, this.weather.atmosphereBuffer);
         void result?.then(report => { this.lastDivergence = report; }).catch(console.error);
         return result;
@@ -213,7 +223,7 @@ export class DustFluid {
 
     private bindGroup(name: KernelName) {
         const kernel = this.kernel(name);
-        const key = `${this.fields.dustVelocity.index}/${this.fields.dustDensity.index}/${this.fields.velocity.index}/${this.allocation?.pressure.index ?? 0}`;
+        const key = `${this.fields.dustStorageVersion}/${this.fields.dustVelocity.index}/${this.fields.dustDensity.index}/${this.fields.velocity.index}/${this.allocation?.pressure.index ?? 0}`;
         const cached = kernel.groups.get(key);
         if (cached) {
             return cached;

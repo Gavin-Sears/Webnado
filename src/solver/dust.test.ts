@@ -107,7 +107,8 @@ async function run() {
     await initWebGPU();
     output.textContent = '';
     device.pushErrorScope('validation');
-    const fields = new Fields();
+    const fields = new Fields(false);
+    expect(fields.dustVelocity.textures[0].width === 1, 'Inactive dust starts with compact fields');
     const mask = new Uint8Array(gridX * gridY * gridZ);
     for (let z = 0; z < gridZ; z++) {
         mask.fill(1, gridX * gridY * z, gridX * gridY * z + gridX);
@@ -124,9 +125,17 @@ async function run() {
     solver.confinement = 0;
     solver.turbulence = false;
     try {
+        solver.dust.enabled = false;
+        solver.reset();
         let encoder = device.createCommandEncoder();
         solver.step(encoder);
         device.queue.submit([encoder.finish()]);
+        solver.dust.enabled = true;
+        encoder = device.createCommandEncoder();
+        solver.step(encoder);
+        device.queue.submit([encoder.finish()]);
+        expect(fields.dustVelocity.textures[0].width === gridX && fields.dustStorageVersion === 1,
+            'Enabling dust replaces compact fields after an inactive reset');
         seed(fields, 2, -4, 0.12);
         encoder = device.createCommandEncoder();
         solver.dust.couple(encoder);

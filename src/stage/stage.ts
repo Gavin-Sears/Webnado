@@ -30,7 +30,8 @@ export class Stage {
     static async create(): Promise<Stage> {
         const site = DEFAULT_SITE;
         const camera = new Camera();
-        const fields = new Fields();
+        const atmosphericCase = new URLSearchParams(location.search).get('case') === 'elreno';
+        const fields = new Fields(!atmosphericCase);
 
         const weather = new WeatherData(site);
 
@@ -39,7 +40,7 @@ export class Stage {
 
         const solver = new FluidSolver(fields, weather);
         weather.onApplied = () => solver.reset();
-        if (new URLSearchParams(location.search).get('case') === 'elreno') {
+        if (atmosphericCase) {
             solver.startElRenoExperiment();
         } else {
             void weather.load();

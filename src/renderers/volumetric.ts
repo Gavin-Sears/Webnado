@@ -109,6 +109,7 @@ export class VolumetricRenderer extends renderer.Renderer {
     private boundColor: GPUTexture | undefined;
     private boundDepth: GPUTexture | undefined;
     private boundVolume: GPUTexture | undefined;
+    private boundDustVersion = -1;
     private raymarchBindGroups: GPUBindGroup[] = [];    // by 2 * thermo.index + velocity.index
     private compositeBindGroup: GPUBindGroup | undefined;
 
@@ -249,7 +250,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const color = gis.sceneColorTexture;
         const depth = gis.sceneDepthTexture;
 
-        if (depth !== this.boundDepth) {
+        if (depth !== this.boundDepth || this.boundDustVersion !== fields.dustStorageVersion) {
             const depthView = depth.createView();
             this.raymarchBindGroups = Array.from({ length: 16 }, (_, i) => device.createBindGroup({
                 label: `raymarch ${i}`,
@@ -285,6 +286,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         this.boundColor = color;
         this.boundDepth = depth;
         this.boundVolume = this.volumeTexture;
+        this.boundDustVersion = fields.dustStorageVersion;
     }
 
     // In the layout of RaymarchParams
@@ -321,12 +323,12 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         this.updateVolumeTarget();
         gis.render(camera); // Three submits this itself
-        this.updateBindGroups();
         this.writeParams();
 
         const encoder = device.createCommandEncoder({ label: "frame" });
 
         solver.step(encoder);
+        this.updateBindGroups();
         // Tracers follow the projected dust field; the solver owns momentum exchange.
         debris.step(encoder, solver.dt, solver.resetVersion);
 
