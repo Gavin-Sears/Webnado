@@ -222,6 +222,16 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
             let rate = (1.0 - exp(-0.5 * fade * parameters.dt)) / parameters.dt;
             force.y += rate * max(storm.timing.w * shape - velocity.y, 0.0);
         }
+        if (spatialWeather && (cell.y == 0 || !fluid(cell - vec3i(0, 1, 0)))) {
+            let surface = spatialSurface(vec3f(cell) + vec3f(0.5));
+            if (surface.x > 0.0) {
+                let wind = centerVelocity(cell) * vec3f(1, 0, 1);
+                let height = 0.5 * cellSize.y;
+                let coefficient = pow(0.4 / log((height + surface.x) / surface.x), 2.0);
+                let rate = coefficient * length(wind) / cellSize.y;
+                force -= wind * rate / (1.0 + parameters.dt * rate);
+            }
+        }
     }
     textureStore(forceOut, cell, vec4f(force, 0));
 }
@@ -301,9 +311,11 @@ fn resetFields(@builtin(global_invocation_id) id: vec3u) {
     let wind = quantizeToF16(background(f32(cell.y) + 0.5).state.zw);
     var velocity = vec3f(wind.x, 0, wind.y);
     var thermo = vec4f(0);
+    var initialEnergy = 0.0;
     if (spatialWeather) {
         let position = vec3f(cell) + vec3f(0.5);
         let state = spatialFrame(position, 0u);
+        initialEnergy = state.energy;
         thermo = state.thermo - vec4f(background(position.y).state.xy, 0, 0);
         for (var axis = 0; axis < 3; axis++) {
             var offset = vec3f(0.5);
@@ -314,7 +326,26 @@ fn resetFields(@builtin(global_invocation_id) id: vec3u) {
     textureStore(velocityOut, cell, vec4f(velocity, 0));
     textureStore(thermoOut, cell, thermo);
     textureStore(vorticityOut, cell, vec4f(0));
-    textureStore(turbulenceOut, cell, vec4f(0));
+    textureStore(turbulenceOut, cell, vec4f(initialEnergy, 0, 0, 0));
+}
+
+@compute @workgroup_size(8, 8, 4)
+fn surfaceExchange(@builtin(global_invocation_id) id: vec3u) {
+    let cell = vec3i(id);
+    if (!inside(cell)) { return; }
+    var state = textureLoad(thermoIn, cell, 0);
+    if (fluid(cell) && (cell.y == 0 || !fluid(cell - vec3i(0, 1, 0)))) {
+        let position = vec3f(cell) + vec3f(0.5);
+        let flux = spatialSurface(position);
+        let air = background(position.y);
+        let dryDensity = air.air.z / (1.0 + 0.001 * (air.state.y + state.y));
+        let exner = pow(air.air.x / 100000.0, 287.05 / 1004.0);
+        // Positive source flux carries heat or moisture from the ground into the first air cell.
+        state.x += parameters.dt * flux.y / (dryDensity * 1004.0 * exner * cellSize.y);
+        state.y += parameters.dt * 1000.0 * flux.z / (dryDensity * 2.5e6 * cellSize.y);
+        state.y = max(state.y, -air.state.y);
+    }
+    textureStore(thermoOut, cell, state);
 }
 
 @compute @workgroup_size(8, 8, 4)

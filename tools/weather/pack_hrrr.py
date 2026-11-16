@@ -50,7 +50,7 @@ def main():
         first['x'][1] - first['x'][0], first['y'][1] - first['y'][0],
         n, factor, rho0, projection['R'], np.deg2rad(latitude), np.deg2rad(longitude),
         args.ground_msl, np.deg2rad(projection['lon_0']),
-        0, 3600, 0, 0, 0, 0, 0, 0
+        0, 3600, 2, 0, 0, 0, 0, 0
     ], dtype='<f4')
     args.output.mkdir(parents=True, exist_ok=True)
     target = args.output / 'state.bin'
@@ -72,11 +72,24 @@ def main():
             packed[..., 10] = current['pressure'] / (287.05 * current['temperature'] * (1 + 0.608 * q))
             packed[..., 11] = 1000 * (current['cloud_ice'] + current['snow'] + current['graupel'])
             packed[..., 12] = current['terrain']
+            packed[..., 13] = current['turbulent_energy']
             if not np.isfinite(packed).all():
                 raise ValueError('Non-finite weather input.')
             packed.tofile(stream)
+        for current, source in zip(data, sources):
+            for variable in ['SHTFL', 'LHTFL']:
+                record = next(record for record in source['messages']
+                              if record['variable'] == variable and record['level'] == 'surface')
+                if record['stepType'] != 'instant':
+                    raise ValueError('This browser format expects instantaneous surface fluxes.')
+            surface = np.zeros((north, east, 8), dtype='<f4')
+            surface[..., 0] = current['roughness']
+            surface[..., 1] = current['sensible_heat_flux']
+            surface[..., 2] = current['latent_heat_flux']
+            surface[..., 3] = current['friction_velocity']
+            surface.tofile(stream)
     manifest = {
-        'version': 1, 'state': 'state.bin', 'bytes': target.stat().st_size,
+        'version': 2, 'state': 'state.bin', 'bytes': target.stat().st_size,
         'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
         'center': {'latitude': latitude, 'longitude': longitude},
         'groundMsl': args.ground_msl, 'shape': [east, levels, north],

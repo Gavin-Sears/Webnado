@@ -6,6 +6,7 @@ import { StormDiagnostics } from '../solver/storm_diagnostics';
 import { WeatherData } from './noaa_loader';
 import { halfToFloat } from '../solver/divergence_check';
 import common from '../solver/common.wgsl?raw';
+import { checkSurfaceExchange } from './surface_exchange.test';
 
 const output = document.getElementById('results')!;
 
@@ -36,7 +37,7 @@ async function run() {
     const points = device.createBuffer({ size: positions.byteLength,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(points, 0, positions);
-    const resultSize = positions.length / 4 * 64;
+    const resultSize = positions.length / 4 * 80;
     const result = device.createBuffer({ size: resultSize,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const readback = device.createBuffer({ size: resultSize,
@@ -47,10 +48,11 @@ async function run() {
         @compute @workgroup_size(1)
         fn sampleWeather(@builtin(global_invocation_id) id: vec3u) {
             let state = spatialState(points[id.x].xyz);
-            output[4u * id.x] = state.wind;
-            output[4u * id.x + 1u] = state.thermo;
-            output[4u * id.x + 2u] = state.air;
-            output[4u * id.x + 3u] = vec4f(spatialCoordinate(points[id.x].xyz), 0);
+            output[5u * id.x] = state.wind;
+            output[5u * id.x + 1u] = state.thermo;
+            output[5u * id.x + 2u] = state.air;
+            output[5u * id.x + 3u] = vec4f(spatialCoordinate(points[id.x].xyz), state.energy);
+            output[5u * id.x + 4u] = spatialSurface(points[id.x].xyz);
         }
     `) });
     const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'sampleWeather' } });
@@ -93,9 +95,19 @@ async function run() {
                 if (channel === 2 && z === -constants.domainZ / 2) expected += correction;
                 if (channel === 2 && z === constants.domainZ / 2) expected -= correction;
                 const tolerance = channel === 8 ? 5 : channel === 3 ? 0.1 : 0.015;
-                const error = Math.abs(gpu[16 * point + channel] - expected);
+                const error = Math.abs(gpu[20 * point + channel] - expected);
                 maxError = Math.max(maxError, error / tolerance);
-                if (error > tolerance) throw new Error(`At ${seconds}s, point ${point}, channel ${channel}: GPU ${gpu[16 * point + channel]}, CPU ${expected}`);
+                if (error > tolerance) throw new Error(`At ${seconds}s, point ${point}, channel ${channel}: GPU ${gpu[20 * point + channel]}, CPU ${expected}`);
+            });
+            const expectedEnergy = a.energy + (b.energy - a.energy) * (time % 1);
+            if (Math.abs(gpu[20 * point + 15] - expectedEnergy) > 0.015) {
+                throw new Error('The source turbulent energy was not interpolated correctly.');
+            }
+            spatial.surface(x, z, seconds).forEach((expected, channel) => {
+                const tolerance = channel === 1 || channel === 2 ? 1 : 0.01;
+                if (Math.abs(gpu[20 * point + 16 + channel] - expected) > tolerance) {
+                    throw new Error('The surface flux was not interpolated correctly.');
+                }
             });
         }
         readback.unmap();
@@ -162,6 +174,10 @@ async function run() {
     });
     samples.unmap();
     expect(true, 'Reset preserves sampled source winds, temperature, moisture, cloud, and rain');
+    await checkSurfaceExchange(solver, fields, weather);
+    if (spatial.manifest.version === 2) {
+        expect(true, 'Source heat and moisture budgets close, and roughness drag removes momentum');
+    }
     solver.paused = false;
     for (let step = 0; step < 20; step++) {
         const encoder = device.createCommandEncoder();

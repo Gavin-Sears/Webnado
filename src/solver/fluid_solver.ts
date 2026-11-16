@@ -39,6 +39,7 @@ const kernelBindings = {
     advect: [0, 1, 2, 3, 4, 5, 6, 29],
     correctAdvection: [0, 1, 2, 3, 4, 5, 6, 7, 16],
     shiftStormWindow: [1, 2, 4, 5, 6, 14, 15, 29],
+    surfaceExchange: [0, 2, 3, 4, 6],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 4, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
@@ -263,6 +264,10 @@ export class FluidSolver {
         }
 
         this.prepareBoundaries(encoder);
+        if (this.weather.spatial?.manifest.version === 2) {
+            this.dispatch(encoder, 'surfaceExchange');
+            this.fields.thermo.swap();
+        }
         this.dust.predict(encoder);
         // Velocity.write and both vorticity buffers are scratch until the force/curl passes replace them.
         this.dispatch(encoder, 'buildVelocityGradients');

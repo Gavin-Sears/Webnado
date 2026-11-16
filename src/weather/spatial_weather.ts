@@ -26,6 +26,7 @@ export interface SpatialSample {
     density: number;
     ice: number;
     terrain: number;
+    energy: number;
 }
 
 export class SpatialWeather {
@@ -37,8 +38,9 @@ export class SpatialWeather {
         this.width = values[0];
         this.depth = values[1];
         this.levels = values[2];
-        const expected = 24 + this.width * this.depth * this.levels * manifest.frames * 16;
-        if (manifest.version !== 1 || values.length !== expected
+        const surfaceValues = manifest.version === 2 ? this.width * this.depth * manifest.frames * 8 : 0;
+        const expected = 24 + this.width * this.depth * this.levels * manifest.frames * 16 + surfaceValues;
+        if (![1, 2].includes(manifest.version) || values.length !== expected
             || manifest.bytes !== values.byteLength || values[3] !== manifest.frames
             || manifest.frames < 2 || manifest.frames > 4
             || manifest.shape.join() !== [this.width, this.levels, this.depth].join()) {
@@ -105,8 +107,33 @@ export class SpatialWeather {
         return {
             theta: result[1], vapor: result[2], east: result[3], south: result[4],
             vertical: result[5], cloud: result[6], rain: result[7], pressure: result[8],
-            temperature: result[9], density: result[10], ice: result[11], terrain: result[12]
+            temperature: result[9], density: result[10], ice: result[11], terrain: result[12], energy: result[13]
         };
+    }
+
+    surface(east: number, south: number, seconds: number): number[] {
+        if (this.manifest.version !== 2) return [0, 0, 0, 0];
+        const [x, z] = this.gridCoordinate(east, south);
+        const baseX = Math.min(Math.floor(x), this.width - 2);
+        const baseZ = Math.min(Math.floor(z), this.depth - 2);
+        const time = Math.min(seconds / this.manifest.intervalSeconds, this.manifest.frames - 1);
+        const start = 24 + this.width * this.depth * this.levels * this.manifest.frames * 16;
+        const result = [0, 0, 0, 0];
+        for (let t = 0; t <= 1; t++) {
+            const frame = Math.min(Math.floor(time) + t, this.manifest.frames - 1);
+            const timeWeight = t ? time % 1 : 1 - time % 1;
+            for (let dz = 0; dz <= 1; dz++) {
+                for (let dx = 0; dx <= 1; dx++) {
+                    const weight = timeWeight * (dx ? x - baseX : 1 - x + baseX)
+                        * (dz ? z - baseZ : 1 - z + baseZ);
+                    const index = start + 8 * ((frame * this.depth + baseZ + dz) * this.width + baseX + dx);
+                    for (let channel = 0; channel < 4; channel++) {
+                        result[channel] += weight * this.values[index + channel];
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     referenceColumn(slices: number, height: number, width: number, depth: number): Float32Array {

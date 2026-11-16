@@ -76,14 +76,16 @@ def main():
         response.raise_for_status()
         index_path.write_text(response.text)
     records = inventory(index_path.read_text())
-    variables = ['PRES', 'HGT', 'TMP', 'SPFH', 'UGRD', 'VGRD', 'VVEL',
+    variables = ['PRES', 'HGT', 'TMP', 'SPFH', 'UGRD', 'VGRD', 'VVEL', 'TKE',
                  'CLMR', 'RWMR', 'CIMIXR', 'SNMR', 'GRLE']
     levels = sorted(set(args.levels))
     selected = [record for record in records if record['variable'] in variables
                 and record['level'] in {f'{level} hybrid level' for level in levels}]
+    surface_variables = ['HGT', 'SFCR', 'SHTFL', 'LHTFL', 'FRICV']
     selected += [next(record for record in records
-                      if record['variable'] == 'HGT' and record['level'] == 'surface')]
-    if len(selected) != len(levels) * len(variables) + 1:
+                      if record['variable'] == variable and record['level'] == 'surface')
+                 for variable in surface_variables]
+    if len(selected) != len(levels) * len(variables) + len(surface_variables):
         raise ValueError('The archive inventory is missing a requested native-level field.')
 
     first = ec.codes_new_from_message(message(url, selected[0], cache))
@@ -129,7 +131,7 @@ def main():
                         ['discipline', 'parameterCategory', 'parameterNumber']]
             if record['variable'] == 'CIMIXR' and units == 'unknown' and identity == [0, 1, 82]:
                 units = 'kg kg**-1'
-            return record, crop, units, hashlib.sha256(raw).hexdigest()
+            return record, crop, units, hashlib.sha256(raw).hexdigest(), ec.codes_get(handle, 'stepType')
         finally:
             ec.codes_release(handle)
 
@@ -139,16 +141,18 @@ def main():
             downloads = pool.map(lambda record: message(url, record, cache), batch)
             # ecCodes decoding stays on one thread; its Windows codec DLLs are not reentrant.
             for record, raw in zip(batch, downloads):
-                record, crop, units, checksum = extract(record, raw)
+                record, crop, units, checksum, step_type = extract(record, raw)
                 fields[(record['variable'], record['level'])] = crop
-                provenance.append({**record, 'units': units, 'sha256': checksum})
+                provenance.append({**record, 'units': units, 'sha256': checksum, 'stepType': step_type})
             print(f'{min(start + 8, len(selected))}/{len(selected)} fields extracted', flush=True)
 
     def stack(variable):
         return np.stack([fields[(variable, f'{level} hybrid level')] for level in levels])
 
     expected_units = {'PRES': 'Pa', 'HGT': 'gpm', 'TMP': 'K', 'SPFH': 'kg kg**-1',
-                      'UGRD': 'm s**-1', 'VGRD': 'm s**-1', 'VVEL': 'Pa s**-1'}
+                      'UGRD': 'm s**-1', 'VGRD': 'm s**-1', 'VVEL': 'Pa s**-1',
+                      'TKE': 'J kg**-1', 'SFCR': 'm', 'SHTFL': 'W m**-2',
+                      'LHTFL': 'W m**-2', 'FRICV': 'm s**-1'}
     for record in provenance:
         expected = expected_units.get(record['variable'])
         if record['variable'] == 'HGT' and record['level'] == 'surface':
@@ -177,6 +181,10 @@ def main():
         'cloud_water': stack('CLMR'), 'rain_water': stack('RWMR'),
         'cloud_ice': stack('CIMIXR'), 'snow': stack('SNMR'), 'graupel': stack('GRLE')
     }
+    output['turbulent_energy'] = stack('TKE')
+    for variable, name in [('SFCR', 'roughness'), ('SHTFL', 'sensible_heat_flux'),
+                           ('LHTFL', 'latent_heat_flux'), ('FRICV', 'friction_velocity')]:
+        output[name] = fields[(variable, 'surface')]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output, **output)
     metadata = {

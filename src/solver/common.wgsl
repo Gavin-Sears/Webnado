@@ -149,6 +149,7 @@ struct SpatialState {
     wind: vec4f, // east, up, south, terrain elevation
     thermo: vec4f,
     air: vec4f,
+    energy: f32,
 }
 
 fn spatialCoordinate(position: vec3f) -> vec3f {
@@ -194,7 +195,8 @@ fn spatialColumn(cell: vec2u, height: f32, frame: u32) -> SpatialState {
     let first = mix(atmosphere[a].state, atmosphere[b].state, fraction);
     let second = mix(atmosphere[a].air, atmosphere[b].air, fraction);
     return SpatialState(vec4f(first.w, second.y, second.x, atmosphere[a + 1u].air.x),
-        vec4f(first.yz, second.zw), mix(atmosphere[a + 1u].state, atmosphere[b + 1u].state, fraction));
+        vec4f(first.yz, second.zw), mix(atmosphere[a + 1u].state, atmosphere[b + 1u].state, fraction),
+        mix(atmosphere[a + 1u].air.y, atmosphere[b + 1u].air.y, fraction));
 }
 
 fn spatialFrame(position: vec3f, frame: u32) -> SpatialState {
@@ -203,7 +205,7 @@ fn spatialFrame(position: vec3f, frame: u32) -> SpatialState {
     let horizontal = clamp(coordinate.xz, vec2f(0), dims - vec2f(1));
     let base = min(vec2u(floor(horizontal)), vec2u(dims) - vec2u(2));
     let fraction = horizontal - vec2f(base);
-    var result = SpatialState(vec4f(0), vec4f(0), vec4f(0));
+    var result = SpatialState(vec4f(0), vec4f(0), vec4f(0), 0);
     for (var z = 0u; z < 2u; z++) {
         for (var x = 0u; x < 2u; x++) {
             let amount = mix(vec2f(1) - fraction, fraction, vec2f(f32(x), f32(z)));
@@ -212,6 +214,7 @@ fn spatialFrame(position: vec3f, frame: u32) -> SpatialState {
             result.wind += weight * point.wind;
             result.thermo += weight * point.thermo;
             result.air += weight * point.air;
+            result.energy += weight * point.energy;
         }
     }
     return result;
@@ -233,7 +236,33 @@ fn spatialState(position: vec3f) -> SpatialState {
     if (position.z <= 0.0) { wind.z += correction; }
     if (position.z >= f32(gridDims.z)) { wind.z -= correction; }
     return SpatialState(wind,
-        mix(a.thermo, b.thermo, fract(time)), mix(a.air, b.air, fract(time)));
+        mix(a.thermo, b.thermo, fract(time)), mix(a.air, b.air, fract(time)), mix(a.energy, b.energy, fract(time)));
+}
+
+fn spatialSurface(position: vec3f) -> vec4f {
+    let timing = atmosphere[${atmosphereSlices}u + 2u].state;
+    if (timing.z < 2.0) {
+        return vec4f(0);
+    }
+    let dims = vec4u(atmosphere[${atmosphereSlices}u].state);
+    let horizontal = clamp(spatialCoordinate(position).xz, vec2f(0), vec2f(dims.xy) - vec2f(1));
+    let base = min(vec2u(floor(horizontal)), dims.xy - vec2u(2));
+    let fraction = horizontal - vec2f(base);
+    let time = clamp(timing.x / timing.y, 0.0, f32(dims.w - 1u));
+    let start = ${atmosphereSlices}u + 3u + 2u * dims.x * dims.y * dims.z * dims.w;
+    var result = vec4f(0);
+    for (var t = 0u; t < 2u; t++) {
+        let frame = min(u32(floor(time)) + t, dims.w - 1u);
+        let timeWeight = select(1.0 - fract(time), fract(time), t == 1u);
+        for (var z = 0u; z < 2u; z++) {
+            for (var x = 0u; x < 2u; x++) {
+                let amount = mix(vec2f(1) - fraction, fraction, vec2f(f32(x), f32(z)));
+                let index = start + ((frame * dims.y + base.y + z) * dims.x + base.x + x);
+                result += timeWeight * amount.x * amount.y * atmosphere[index].state;
+            }
+        }
+    }
+    return result;
 }
 
 fn fieldFaceVelocity(field: texture_3d<f32>, cell: vec3i, axis: i32) -> f32 {
