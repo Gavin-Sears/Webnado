@@ -135,6 +135,11 @@ fn advect(@builtin(global_invocation_id) id: vec3u) {
         thermo = sampleThermo(departure);
         thermo += vec4f(background(departure.y).state.xy - background(position.y).state.xy, 0.0, 0.0);
 
+        if (storm.timing.x > 0.0 && (departure.x < 0.5 || departure.z < 0.5
+            || departure.x > f32(gridDims.x) - 0.5 || departure.z > f32(gridDims.z) - 0.5)) {
+            thermo = vec4f(0);
+        }
+
         if (parameters.addThermal > 0.0) {
             let world = domainMin + position * cellSize;
             let radius = max(min(700.0, 0.08 * domainSize.x), cellSize.x);

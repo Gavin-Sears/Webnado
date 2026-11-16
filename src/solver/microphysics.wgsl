@@ -116,7 +116,7 @@ fn microphysics(@builtin(global_invocation_id) id: vec3u) {
 }
 
 // Donor-cell fall of qr. Separate pass: a storage texture cannot read a neighbor this pass just wrote.
-// Rain falls into the air cell below. A solid cell underneath keeps it.
+// The atmospheric experiment drains precipitation when it reaches a solid surface.
 @compute @workgroup_size(8, 8, 4)
 fn sedimentRain(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
@@ -133,7 +133,7 @@ fn sedimentRain(@builtin(global_invocation_id) id: vec3u) {
         let speed = terminalFallSpeed(rainHere, air.air.z);
         let courant = clamp(speed * parameters.dt / cellSize.y, 0.0, 1.0);
         let below = cell - vec3i(0, 1, 0);
-        let fallsOut = !inside(below) || fluid(below);
+        let fallsOut = !inside(below) || fluid(below) || parameters.rainDrain > 0.0;
         let leaving = select(0.0, courant * rainHere, fallsOut);
 
         var incoming = 0.0;
@@ -143,7 +143,7 @@ fn sedimentRain(@builtin(global_invocation_id) id: vec3u) {
             let airAbove = background(f32(above.y) + 0.5);
             let speedAbove = terminalFallSpeed(rainAbove, airAbove.air.z);
             let courantAbove = clamp(speedAbove * parameters.dt / cellSize.y, 0.0, 1.0);
-            incoming = courantAbove * rainAbove;
+            incoming = courantAbove * rainAbove * airAbove.air.z / max(air.air.z, 1e-6);
         }
 
         sample.w = max(rainHere - leaving + incoming, 0.0) * 1000.0;

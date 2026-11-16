@@ -6,7 +6,7 @@ struct SolverParameters {
     mixing: f32,
     turbulence: f32,
     transportedVorticity: f32,
-    vorticityPadding: f32,
+    rainDrain: f32,
     dustEnabled: f32,
     grainRadius: f32,
     grainDensity: f32,
@@ -47,6 +47,13 @@ override dustPhase: bool = false;
 @group(0) @binding(26) var dustGradientYOut: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(27) var dustGradientZ: texture_3d<f32>;
 @group(0) @binding(28) var dustGradientZOut: texture_storage_3d<rgba16float, write>;
+
+struct StormParameters {
+    timing: vec4f,  // enabled, elapsed, lifting duration, target updraft
+    region: vec4f,  // horizontal radius, vertical radius, unused
+    damping: vec4f, // damping height, inverse timescale, unused
+}
+@group(0) @binding(29) var<uniform> storm: StormParameters;
 
 const fluidBit = 64u;
 

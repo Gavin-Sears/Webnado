@@ -23,8 +23,13 @@ export const resolutions: Record<string, [number, number, number]> = {
 const requestedResolution = new URLSearchParams(window.location.search).get('res') ?? 'medium';
 export const resolutionName = Object.hasOwn(resolutions, requestedResolution) ? requestedResolution : 'medium';
 const [gridX, gridY, gridZ] = resolutions[resolutionName];
-export const domains = { storm: [12800, 6400, 12800], local: [3200, 1600, 3200] } as const;
-export const domainName = new URLSearchParams(window.location.search).get('domain') === 'local' ? 'local' : 'storm';
+export const domains = {
+    storm: [12800, 6400, 12800],
+    local: [3200, 1600, 3200],
+    supercell: [64000, 18000, 64000]
+} as const;
+const requestedDomain = new URLSearchParams(window.location.search).get('domain') ?? 'storm';
+export const domainName = Object.hasOwn(domains, requestedDomain) ? requestedDomain as keyof typeof domains : 'storm';
 const [domainX, domainY, domainZ] = domains[domainName];
 
 // Declared this way so minification keeps values that only shaders use

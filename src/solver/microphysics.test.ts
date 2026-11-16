@@ -167,6 +167,35 @@ async function run() {
             'Rain sedimentation did not move water downward conservatively');
         passed('A rain layer falls downward and preserves water in a uniform-density column');
 
+        for (let slice = 0; slice < constants.atmosphereSlices; slice++) {
+            column[slice * 8 + 6] = 1.4 - 0.5 * (slice + 0.5) / constants.atmosphereSlices;
+        }
+        weather.setAtmosphere(column);
+        result = await phaseChange(saturation, 0, 1, true);
+        const weightedRain = (state: Float32Array) => {
+            let mass = 0;
+            for (let index = 0; index < state.length / 4; index++) {
+                const y = Math.floor(index / gridX) % gridY;
+                const density = 1.4 - 0.5 * (y + 0.5) / gridY;
+                mass += density * state[4 * index + 3];
+            }
+            return mass;
+        };
+        expect(Math.abs(weightedRain(result.after) / weightedRain(result.before) - 1) < 0.005,
+            'Sedimentation changed rain mass across density levels');
+        passed('Rain sedimentation conserves density-weighted mass in a stratified column');
+
+        for (let slice = 0; slice < constants.atmosphereSlices; slice++) {
+            column[slice * 8 + 6] = 1.16;
+        }
+        weather.setAtmosphere(column);
+        solver.warmRain.rainDrain = true;
+        result = await phaseChange(saturation, 0, 1);
+        expect(rainStats(result.after).mass < rainStats(result.before).mass * 0.999,
+            'Precipitation did not leave through the ground');
+        passed('The atmospheric experiment removes rain reaching the ground');
+        solver.warmRain.rainDrain = false;
+
         const fixture: OpenMeteoForecast = {
             elevation: 100,
             hourly: {

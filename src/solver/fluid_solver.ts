@@ -8,6 +8,7 @@ import { DivergenceCheck, type DivergenceReport } from './divergence_check';
 import { DustFluid } from './dust_fluid';
 import { MultigridPressure, type PressureMethod } from './multigrid_pressure';
 import { WarmRain } from './warm_rain';
+import { StormExperiment } from './storm_experiment';
 
 import commonSource from './common.wgsl?raw';
 import boundarySource from './boundaries.wgsl?raw';
@@ -27,13 +28,13 @@ const kernelBindings = {
     curl: [1, 3, 4, 8],
     forces: [0, 1, 3, 4, 5, 7, 16, 18],
     energy: [0, 1, 2, 3, 4, 14, 15],
-    atmosphericForces: [0, 1, 2, 3, 4, 14, 17],
+    atmosphericForces: [0, 1, 2, 3, 4, 14, 17, 29],
     evolveVorticity: [0, 1, 3, 4, 7, 8, 14, 16, 18],
     mixThermo: [0, 2, 3, 6, 14],
     resetFields: [4, 5, 6, 8, 15],
     clearPressure: [11],
     clearForcing: [19],
-    advect: [0, 1, 2, 3, 4, 5, 6],
+    advect: [0, 1, 2, 3, 4, 5, 6, 29],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
@@ -73,6 +74,7 @@ export class FluidSolver {
     lastDivergence: DivergenceReport | undefined;
     readonly dust: DustFluid;
     readonly warmRain: WarmRain;
+    readonly storm = new StormExperiment();
 
     private readonly pressure = new PingPong('pressure', 'r32float');
     private readonly divergence = createVolume('divergence', 'r32float');
@@ -165,6 +167,12 @@ export class FluidSolver {
         folder.add(this, 'addThermal').name('Add warm thermal');
         folder.add(this, 'startShearExperiment').name('Start shear experiment');
         folder.add(this, 'reset').name('Reset simulation');
+        this.storm.buildGui(gui, () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('domain', 'supercell');
+            url.searchParams.set('case', 'elreno');
+            window.location.href = url.href;
+        });
         this.dust.buildGui(gui);
     }
 
@@ -195,6 +203,7 @@ export class FluidSolver {
         ]));
         this.thermalRequested = false;
         this.dust.writeParameters();
+        this.storm.write(this.dt);
 
         this.prepareBoundaries(encoder);
         this.dust.predict(encoder);
@@ -217,6 +226,7 @@ export class FluidSolver {
 
         this.projectPressure(encoder);
         this.dust.finish(encoder, this.jacobiIterations, this.pressureMethod, this.multigridCycles);
+        this.warmRain.rainDrain = this.storm.enabled;
         this.microphysics?.step(encoder, this.dt);
         this.dispatch(encoder, 'mixThermo');
         this.fields.thermo.swap();
@@ -238,6 +248,18 @@ export class FluidSolver {
         this.resetRequested = true;
         this.thermalRequested = false;
         this.steps = 0;
+        this.storm.elapsed = 0;
+        if (this.weather.scenario !== 'elreno') {
+            this.storm.enabled = false;
+        }
+    }
+
+    startElRenoExperiment() {
+        this.weather.useElReno();
+        this.reset();
+        this.storm.enabled = true;
+        this.dust.enabled = false;
+        this.confinement = 0;
     }
 
     startShearExperiment() {
@@ -336,7 +358,7 @@ export class FluidSolver {
             visibility: GPUShaderStage.COMPUTE
         };
 
-        if (binding === 0) {
+        if (binding === 0 || binding === 29) {
             entry.buffer = { type: 'uniform' };
         } else if (binding === 4) {
             entry.buffer = { type: 'read-only-storage' };
@@ -395,7 +417,8 @@ export class FluidSolver {
             16: this.atmosphericForceView,
             17: this.atmosphericForceView,
             18: this.fields.windForcingView,
-            19: this.fields.windForcingView
+            19: this.fields.windForcingView,
+            29: { buffer: this.storm.buffer }
         };
 
         const entries = kernelBindings[name].map(binding => ({
@@ -435,6 +458,7 @@ export class FluidSolver {
     }
 
     destroy() {
+        this.storm.buffer.destroy();
         this.warmRain.destroy();
         this.multigrid?.destroy();
         this.dust.destroy();

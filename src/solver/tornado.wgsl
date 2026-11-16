@@ -132,6 +132,20 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
             let upper = scalarNeighbor(turbulenceIn, cell, cell + offset).x;
             force[axis] -= (upper - lower) / (3.0 * cellSize[axis]);
         }
+        if (storm.timing.x > 0.0) {
+            let world = domainMin + (vec3f(cell) + vec3f(0.5)) * cellSize;
+            let velocity = centerVelocity(cell);
+            let air = background(f32(cell.y) + 0.5);
+            let damping = smoothstep(storm.damping.x, domainSize.y, world.y) * storm.damping.y;
+            force -= damping * (velocity - vec3f(air.state.z, 0, air.state.w));
+
+            // Temporary lifting initiates convection without prescribing circulation.
+            let radius = vec3f(storm.region.x, storm.region.y, storm.region.x);
+            let distance = length((world - vec3f(0, storm.region.y, 0)) / radius);
+            let shape = pow(max(0.0, cos(min(distance, 1.0) * 1.5707963)), 2.0);
+            let fade = 1.0 - smoothstep(0.75 * storm.timing.z, storm.timing.z, storm.timing.y);
+            force.y += fade * shape * max(storm.timing.w - velocity.y, 0.0) / 60.0;
+        }
     }
     textureStore(forceOut, cell, vec4f(force, 0));
 }

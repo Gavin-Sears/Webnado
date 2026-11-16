@@ -39,7 +39,11 @@ export class Stage {
 
         const solver = new FluidSolver(fields, weather);
         weather.onApplied = () => solver.reset();
-        void weather.load();
+        if (new URLSearchParams(location.search).get('case') === 'elreno') {
+            solver.startElRenoExperiment();
+        } else {
+            void weather.load();
+        }
         const debris = new Debris(fields, camera, () => solver.dust.seed());
 
         return new Stage(site, camera, fields, weather, gis, solver, debris);

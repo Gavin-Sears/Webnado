@@ -11,6 +11,7 @@ const pipelineCache = new WeakMap<GPUDevice, GPUComputePipeline[]>();
 
 export class WarmRain implements Microphysics {
     enabled = true;
+    rainDrain = false;
 
     private readonly parameters = device.createBuffer({
         label: 'warm-rain parameters',
@@ -45,7 +46,9 @@ export class WarmRain implements Microphysics {
         if (!this.enabled) {
             return;
         }
-        device.queue.writeBuffer(this.parameters, 0, new Float32Array([dt]));
+        device.queue.writeBuffer(this.parameters, 0, new Float32Array([
+            dt, 0, 0, 0, 0, 0, 0, Number(this.rainDrain)
+        ]));
         for (const [index, pipeline] of this.pipelines.entries()) {
             const key = `${index}/${this.fields.thermo.index}`;
             let group = this.groups.get(key);
