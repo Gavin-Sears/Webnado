@@ -112,7 +112,7 @@ export class DustFluid {
 
     buildGui(gui: GUI, rotation?: () => number[] | undefined) {
         const folder = gui.addFolder('Dust fluid');
-        folder.add(this, 'enabled').name('Enabled').onChange(() => this.clear());
+        folder.add(this, 'enabled').name('Enabled').listen().onChange(() => this.clear());
         folder.add(this, 'loading', 0.0001, 0.2, 0.0001).name('Seed density (kg/m3)');
         folder.add(this, 'grainRadiusMicrons', 10, 1000, 1).name('Grain radius (um)');
         folder.add(this, 'grainDensity', 100, 3000, 10).name('Material density (kg/m3)');
