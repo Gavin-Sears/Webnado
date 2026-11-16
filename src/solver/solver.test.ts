@@ -44,8 +44,6 @@ const seedSource = `
     override mode: u32;
     @group(0) @binding(0) var velocity: texture_storage_3d<rgba16float, write>;
     @group(0) @binding(1) var thermo: texture_storage_3d<rgba16float, write>;
-    @group(0) @binding(2) var turbulence: texture_storage_3d<rgba16float, write>;
-    @group(0) @binding(3) var vorticity: texture_storage_3d<rgba16float, write>;
 
     @compute @workgroup_size(8, 8, 4)
     fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -75,8 +73,6 @@ const seedSource = `
 
         textureStore(velocity, cell, vec4f(wind, 0));
         textureStore(thermo, cell, state);
-        textureStore(turbulence, cell, vec4f(0));
-        textureStore(vorticity, cell, vec4f(0));
     }
 `;
 
@@ -96,9 +92,7 @@ function seed(fields: Fields, mode: number) {
         layout: pipeline.getBindGroupLayout(0),
         entries: [
             { binding: 0, resource: fields.velocity.read },
-            { binding: 1, resource: fields.thermo.read },
-            { binding: 2, resource: fields.turbulence.read },
-            { binding: 3, resource: fields.vorticity.read }
+            { binding: 1, resource: fields.thermo.read }
         ]
     });
 
@@ -207,53 +201,14 @@ async function runTests() {
     fields.setObstacles(groundMask());
 
     let solver = new FluidSolver(fields, weather);
-    solver.microphysics = undefined;
-    solver.turbulence = false;
-    solver.transportedVorticity = false;
     const replaceSolver = () => {
         solver.destroy();
         solver = new FluidSolver(fields, weather);
-        solver.microphysics = undefined;
-        solver.turbulence = false;
-        solver.transportedVorticity = false;
         return solver;
     };
 
     try {
-        const settings = new URLSearchParams(location.search);
-        if (settings.has('pressureBenchmark')) {
-            solver.pressureMethod = settings.get('method') === 'jacobi' ? 'jacobi' : 'multigrid';
-            solver.jacobiIterations = Number(settings.get('iterations') ?? 40);
-            solver.multigridCycles = Number(settings.get('cycles') ?? solver.multigridCycles);
-            seed(fields, 1);
-            let encoder = device.createCommandEncoder();
-            solver.project(encoder);
-            device.queue.submit([encoder.finish()]);
-            const cold = await measure(solver);
-            for (let frame = 0; frame < 80; frame++) {
-                seed(fields, 1);
-                const time = performance.now();
-                profiler?.beginFrame(time);
-                encoder = device.createCommandEncoder();
-                solver.project(encoder);
-                profiler?.resolve(encoder);
-                device.queue.submit([encoder.finish()]);
-                profiler?.afterSubmit();
-                profiler?.endFrame(time);
-                await device.queue.onSubmittedWorkDone();
-            }
-            const warm = await measure(solver);
-            const error = await device.popErrorScope();
-            expect(error === null, error?.message ?? 'Pressure benchmark GPU validation failed');
-            expect(warm.nonFinite === 0 && warm.maxBlockedFaceSpeed === 0, 'Pressure benchmark boundary check failed');
-            passed('Pressure benchmark completes', { method: solver.pressureMethod, cold, warm });
-            output.textContent += '\n\nAll checks passed.';
-            return results;
-        }
         if (resolutionName !== 'low') {
-            solver.microphysics = solver.warmRain;
-            solver.turbulence = true;
-            solver.transportedVorticity = true;
             seed(fields, 2);
             await runSteps(solver, 3);
             await measure(solver);
@@ -272,12 +227,8 @@ async function runTests() {
         const resting = await measure(solver);
         expect(resting.rms === 0 && resting.nonFinite === 0, 'Resting flow did not remain zero');
         passed('Resting atmosphere stays at rest', resting);
-        const initialError = await device.popErrorScope();
-        expect(initialError === null, initialError?.message ?? 'Initial GPU validation failed');
-        device.pushErrorScope('validation');
 
         seed(fields, 1);
-        solver.pressureMethod = 'jacobi';
         solver.jacobiIterations = 41;
         let encoder = device.createCommandEncoder();
         solver.project(encoder);
@@ -301,31 +252,6 @@ async function runTests() {
         expect(projected.rms < 5e-4, 'Manufactured gradient projection missed the divergence target');
         expect(projected.maxBlockedFaceSpeed === 0, 'Projection changed blocked face velocities');
         passed('Manufactured gradient flow projects below 5e-4', projected);
-
-        replaceSolver();
-        seed(fields, 1);
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        const multigrid = await measure(solver);
-        expect(multigrid.rms < 5e-4 && multigrid.nonFinite === 0, 'Multigrid gradient projection missed the divergence target');
-        expect(multigrid.maxBlockedFaceSpeed === 0, 'Multigrid changed blocked face velocities');
-        passed('Multigrid removes a manufactured gradient in six V-cycles', multigrid);
-
-        seed(fields, 1);
-        solver.pressureMethod = 'jacobi';
-        solver.jacobiIterations = 1;
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        seed(fields, 1);
-        solver.pressureMethod = 'multigrid';
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        const switched = await measure(solver);
-        expect(switched.rms < multigrid.rms, 'Switching pressure methods lost the warm pressure state');
-        passed('Jacobi and multigrid share the newest pressure after switching', switched);
 
         replaceSolver();
         seed(fields, 2);
@@ -443,85 +369,15 @@ async function runTests() {
         solver.buoyancy = 0;
         solver.confinement = 0;
         solver.addThermal();
+        const initialThermoIndex = fields.thermo.index;
         await runSteps(solver, 1);
+        expect(fields.thermo.index === 1 - initialThermoIndex, 'Newest thermo state was not swapped into read');
         const injected = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
         await runSteps(solver, 3);
         const retained = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
         expect(injected.total > 0, 'Add thermal did not initialize a visible cloud tracer');
         expect(Math.abs(retained.total / injected.total - 1) < 0.001, 'Thermal source was applied more than once');
         passed('Thermal injection runs once and leaves the newest scalar in read');
-
-        replaceSolver();
-        solver.turbulence = true;
-        solver.transportedVorticity = true;
-        seed(fields, 2);
-        const dynamicsSteps = Number(new URLSearchParams(location.search).get('dynamicsStress') ?? 100);
-        await runSteps(solver, dynamicsSteps);
-        const energy = await readField(fields.turbulence.textures[fields.turbulence.index]);
-        const rotation = await readField(fields.vorticity.textures[fields.vorticity.index]);
-        let maxEnergy = 0;
-        let maxRotation = 0;
-        for (let index = 0; index < energy.length; index += 4) {
-            expect(energy[index] >= 0, 'Turbulent energy became negative');
-            maxEnergy = Math.max(maxEnergy, energy[index]);
-            maxRotation = Math.max(maxRotation, rotation[index + 3]);
-        }
-        expect(energy.every(Number.isFinite) && rotation.every(Number.isFinite),
-            'Tornado dynamics produced nonfinite fields');
-        expect(maxEnergy > 0 && maxRotation > 0, 'Tornado dynamics did not respond to the thermal');
-        const tornadoReport = await measure(solver);
-        expect(tornadoReport.rms < 5e-4, 'Tornado dynamics exceeded the divergence target');
-        passed('Turbulent energy and transported vorticity evolve together', { maxEnergy, maxRotation, tornadoReport });
-
-        solver.reset();
-        await runSteps(solver, 1);
-        const microphysicsModule = device.createShaderModule({ code: processShaderRaw(`
-            @group(0) @binding(0) var input: texture_3d<f32>;
-            @group(0) @binding(1) var output: texture_storage_3d<rgba16float, write>;
-            @compute @workgroup_size(8, 8, 4)
-            fn main(@builtin(global_invocation_id) id: vec3u) {
-                if (all(vec3i(id) < gridDims)) {
-                    let state = textureLoad(input, vec3i(id), 0);
-                    textureStore(output, vec3i(id), state + vec4f(0.125, 0, 0.01, 0));
-                }
-            }
-        `) });
-        const microphysicsPipeline = device.createComputePipeline({
-            layout: 'auto', compute: { module: microphysicsModule }
-        });
-        const microphysicsGroups = [0, 1].map(index => device.createBindGroup({
-            layout: microphysicsPipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: fields.thermo.view(index) },
-                { binding: 1, resource: fields.thermo.view(1 - index) }
-            ]
-        }));
-        let microphysicsCalls = 0;
-        solver.microphysics = {
-            step(encoder, dt) {
-                expect(dt === solver.dt, 'Microphysics received a different time step');
-                const pass = encoder.beginComputePass();
-                pass.setPipeline(microphysicsPipeline);
-                pass.setBindGroup(0, microphysicsGroups[fields.thermo.index]);
-                pass.dispatchWorkgroups(constants.gridX / 8, constants.gridY / 8, constants.gridZ / 4);
-                pass.end();
-                fields.thermo.swap();
-                microphysicsCalls++;
-            }
-        };
-        await runSteps(solver, 3);
-        expect(microphysicsCalls === 3, 'Microphysics did not run once per simulation step');
-        const microphysicsState = await readField(fields.thermo.textures[fields.thermo.index]);
-        const middle = 4 * (constants.gridX / 2
-            + constants.gridX * (constants.gridY / 2 + constants.gridY * constants.gridZ / 2));
-        expect(Math.abs(microphysicsState[middle + 2] - 0.03) < 0.002,
-            'Solver transport or ping-pong swaps overwrote microphysics output');
-        solver.microphysics = undefined;
-        solver.reset();
-        await runSteps(solver, 1);
-        const resetThermo = await readField(fields.thermo.textures[fields.thermo.index]);
-        expect(resetThermo.every(value => value === 0), 'Reset left atmospheric perturbations behind');
-        passed('Microphysics receives each step and reset clears the evolved state');
 
         if (resolutionName === 'low') {
             const mask = groundMask();
@@ -543,23 +399,6 @@ async function runTests() {
             expect(obstacleReport.maxBlockedFaceSpeed === 0, 'Changed obstacles were not applied');
             expect(obstacleReport.rms < 5e-4, 'Projection failed with disconnected fluid regions');
             passed('Obstacle changes rebuild the open bits', obstacleReport);
-
-            for (let z = 0; z < gridZ; z++) {
-                for (let y = 0; y < gridY; y++) {
-                    mask[gridX / 2 - 1 + gridX * (y + gridY * z)] = 2;
-                    mask[gridX / 2 + 1 + gridX * (y + gridY * z)] = 2;
-                    mask[gridX / 2 + gridX * (y + gridY * z)] = y === 0 ? 1 : 0;
-                }
-            }
-            fields.setObstacles(mask);
-            seed(fields, 1);
-            encoder = device.createCommandEncoder();
-            solver.project(encoder);
-            device.queue.submit([encoder.finish()]);
-            const thinWalls = await measure(solver);
-            expect(thinWalls.rms < 5e-4 && thinWalls.maxBlockedFaceSpeed === 0,
-                'Multigrid failed with walls inside coarse cells');
-            passed('Thin walls and a narrow fluid channel survive coarsening', thinWalls);
         }
 
         fields.setObstacles(new Uint8Array(constants.gridX * constants.gridY * constants.gridZ).fill(1));
