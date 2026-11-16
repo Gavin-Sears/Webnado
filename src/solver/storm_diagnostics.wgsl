@@ -9,6 +9,7 @@ var<workgroup> third: array<vec4f, 128>;
 var<workgroup> locations: array<vec4f, 128>;
 var<workgroup> updraftLocations: array<vec4f, 128>;
 var<workgroup> groundLocations: array<vec4f, 128>;
+var<workgroup> swirlLocations: array<vec4f, 128>;
 
 fn center(cell: vec3i) -> vec3f {
     let here = clamp(cell, vec3i(0), gridDims - 1);
@@ -33,6 +34,7 @@ fn main(@builtin(local_invocation_index) local: u32,
     var location = vec4f(0);
     var updraftLocation = vec4f(0);
     var groundLocation = vec4f(0);
+    var swirlLocation = vec4f(0);
     if (cell.z < gridDims.z && textureLoad(materials, cell, 0).x == 0u) {
         let state = textureLoad(thermo, cell, 0);
         let wind = center(cell);
@@ -51,6 +53,10 @@ fn main(@builtin(local_invocation_index) local: u32,
         location = vec4f(world, a.w);
         if (interior && height < 200.0) {
             groundLocation = vec4f(world, verticalCurl);
+            let trace = dx.x + dz.z;
+            let determinant = dx.x * dz.z - dz.x * dx.z;
+            let strength = 0.5 * sqrt(max(0.0, 4.0 * determinant - trace * trace));
+            swirlLocation = vec4f(world, strength);
         }
         if (interior && height > 500.0 && height < 6000.0 && wind.y > 5.0) {
             updraftLocation = vec4f(world, wind.y * max(signedCurl, 0.0001));
@@ -78,9 +84,13 @@ fn main(@builtin(local_invocation_index) local: u32,
     locations[local] = location;
     updraftLocations[local] = updraftLocation;
     groundLocations[local] = groundLocation;
+    swirlLocations[local] = swirlLocation;
     workgroupBarrier();
     for (var stride = 64u; stride > 0u; stride >>= 1u) {
         if (local < stride) {
+            if (swirlLocations[local + stride].w > swirlLocations[local].w) {
+                swirlLocations[local] = swirlLocations[local + stride];
+            }
             if (groundLocations[local + stride].w > groundLocations[local].w) {
                 groundLocations[local] = groundLocations[local + stride];
             }
@@ -100,11 +110,12 @@ fn main(@builtin(local_invocation_index) local: u32,
         workgroupBarrier();
     }
     if (local == 0u) {
-        results[6u * groupIndex] = first[0];
-        results[6u * groupIndex + 1u] = second[0];
-        results[6u * groupIndex + 2u] = third[0];
-        results[6u * groupIndex + 3u] = locations[0];
-        results[6u * groupIndex + 4u] = updraftLocations[0];
-        results[6u * groupIndex + 5u] = groundLocations[0];
+        results[7u * groupIndex] = first[0];
+        results[7u * groupIndex + 1u] = second[0];
+        results[7u * groupIndex + 2u] = third[0];
+        results[7u * groupIndex + 3u] = locations[0];
+        results[7u * groupIndex + 4u] = updraftLocations[0];
+        results[7u * groupIndex + 5u] = groundLocations[0];
+        results[7u * groupIndex + 6u] = swirlLocations[0];
     }
 }

@@ -22,11 +22,13 @@ export interface StormReport {
     rotatingUpdraftScore: number;
     groundVorticity: number;
     groundLocation: number[];
+    groundSwirlingStrength: number;
+    swirlLocation: number[];
 }
 
 export class StormDiagnostics {
     private readonly groups = Math.ceil(constants.gridX * constants.gridY * constants.gridZ / 128);
-    private readonly size = this.groups * 96;
+    private readonly size = this.groups * 112;
     private readonly output = device.createBuffer({
         size: this.size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
     });
@@ -68,8 +70,10 @@ export class StormDiagnostics {
         let rotatingUpdraftScore = 0;
         let groundVorticity = 0;
         let groundLocation = [0, 0, 0];
+        let groundSwirlingStrength = 0;
+        let swirlLocation = [0, 0, 0];
         for (let group = 0; group < this.groups; group++) {
-            const offset = group * 24;
+            const offset = group * 28;
             for (let channel = 0; channel < 8; channel++) {
                 maxima[channel] = Math.max(maxima[channel], data[offset + channel]);
             }
@@ -89,6 +93,10 @@ export class StormDiagnostics {
                 groundVorticity = data[offset + 23];
                 groundLocation = Array.from(data.subarray(offset + 20, offset + 23));
             }
+            if (data[offset + 27] > groundSwirlingStrength) {
+                groundSwirlingStrength = data[offset + 27];
+                swirlLocation = Array.from(data.subarray(offset + 24, offset + 27));
+            }
         }
         this.readback.unmap();
         const [updraft, speed, verticalVorticity, surfaceVorticity, cloud, rain, temperature, invalid] = maxima;
@@ -97,6 +105,7 @@ export class StormDiagnostics {
             interiorVerticalVorticity, divergenceRms: Math.sqrt(squared / Math.max(count, 1)),
             divergenceMax, surfaceLocation, updraftLocation, rotatingUpdraftScore,
             groundVorticity, groundLocation,
+            groundSwirlingStrength, swirlLocation,
             lowestSampleHeight: (constants.freeSlipGround ? 0.5 : 1.5) * constants.domainY / constants.gridY
         };
     }
