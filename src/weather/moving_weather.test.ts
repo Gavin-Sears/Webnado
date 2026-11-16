@@ -3,8 +3,7 @@ import { constants } from '../shaders/shaders';
 import type { Fields } from '../stage/fields';
 import type { FluidSolver } from '../solver/fluid_solver';
 import type { WeatherData } from './noaa_loader';
-import { halfToFloat } from '../solver/divergence_check';
-import { readBuffer, readTexture } from './surface_exchange.test';
+import { readBuffer, readScalarField, readTexture } from './surface_exchange.test';
 
 export async function checkMovingWeather(solver: FluidSolver, fields: Fields, weather: WeatherData) {
     if (weather.spatial!.manifest.version < 3) return;
@@ -15,7 +14,7 @@ export async function checkMovingWeather(solver: FluidSolver, fields: Fields, we
     device.queue.submit([surface.finish()]);
     const beforeResidual = new Float32Array(await readBuffer(solver['surfaceResiduals'][solver['surfaceResidualIndex']]));
     const beforeWind = new Float32Array(await readTexture(fields.velocity.textures[fields.velocity.index]));
-    const beforeThermo = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
+    const beforeThermo = await readScalarField(fields.thermo.textures[fields.thermo.index]);
     const dx = 4;
     const dz = -3;
     solver.storm.shiftX = dx;
@@ -33,7 +32,7 @@ export async function checkMovingWeather(solver: FluidSolver, fields: Fields, we
     fields.turbulence.swap();
     device.queue.submit([encoder.finish()]);
     const wind = new Float32Array(await readTexture(fields.velocity.textures[fields.velocity.index]));
-    const thermo = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
+    const thermo = await readScalarField(fields.thermo.textures[fields.thermo.index]);
     const residual = new Float32Array(await readBuffer(solver['surfaceResiduals'][solver['surfaceResidualIndex']]));
     for (let z = -dz; z < gridZ; z++) {
         for (let y = 0; y < gridY; y++) {
@@ -72,7 +71,7 @@ export async function checkMovingWeather(solver: FluidSolver, fields: Fields, we
     }
     const sourceState = weather.spatial!.sample((cell[0] + 0.5) / gridX * domainX - domainX / 2,
         (cell[1] + 0.5) / gridY * domainY, (cell[2] + 0.5) / gridZ * domainZ - domainZ / 2);
-    if (Math.abs(halfToFloat(thermo[index + 2]) - sourceState.cloud) > 0.02) {
+    if (Math.abs(thermo[index + 2] - sourceState.cloud) > 0.02) {
         throw new Error('The newly exposed cloud field does not match the real weather input.');
     }
     if (weather.moveSpatialWindow(1e9, 1e9)) {

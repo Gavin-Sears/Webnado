@@ -87,6 +87,9 @@ export class FluidSolver {
     private readonly divergence = createVolume('divergence', 'r32float');
     private readonly openBits = createVolume('open neighbor bits', 'r32uint');
     private readonly atmosphericForce = createVolume('atmospheric forces', constants.velocityFormat);
+    private readonly originalThermo = constants.preciseScalars
+        ? createVolume('thermodynamics before advection', constants.scalarFormat) : undefined;
+    private readonly originalThermoView = this.originalThermo?.createView();
 
     private readonly divergenceView = this.divergence.createView();
     private readonly openBitsView = this.openBits.createView();
@@ -317,7 +320,7 @@ export class FluidSolver {
             );
             encoder.copyTextureToTexture(
                 { texture: this.fields.thermo.textures[this.fields.thermo.index] },
-                { texture: this.fields.vorticity.textures[1 - this.fields.vorticity.index] }, size
+                { texture: this.originalThermo ?? this.fields.vorticity.textures[1 - this.fields.vorticity.index] }, size
             );
         }
         this.dispatch(encoder, 'advect');
@@ -512,6 +515,8 @@ export class FluidSolver {
                 format = 'r32uint';
             } else if (binding === 5 || binding === 17) {
                 format = constants.velocityFormat;
+            } else if (binding === 6 || binding === 15) {
+                format = constants.scalarFormat;
             }
 
             entry.storageTexture = {
@@ -549,7 +554,7 @@ export class FluidSolver {
             4: { buffer: this.weather.atmosphereBuffer },
             5: this.fields.velocity.write,
             6: this.fields.thermo.write,
-            7: name === 'correctAdvection' ? this.fields.vorticity.write : this.fields.vorticity.read,
+            7: name === 'correctAdvection' ? this.originalThermoView ?? this.fields.vorticity.write : this.fields.vorticity.read,
             8: this.fields.vorticity.write,
             9: this.pressure.read,
             10: this.divergenceView,
@@ -619,6 +624,7 @@ export class FluidSolver {
         this.divergence.destroy();
         this.openBits.destroy();
         this.atmosphericForce.destroy();
+        this.originalThermo?.destroy();
         this.divergenceReadback?.destroy();
     }
 }

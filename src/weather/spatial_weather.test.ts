@@ -8,6 +8,7 @@ import { halfToFloat } from '../solver/divergence_check';
 import common from '../solver/common.wgsl?raw';
 import { checkSurfaceExchange } from './surface_exchange.test';
 import { checkMovingWeather } from './moving_weather.test';
+import { checkScalarPrecision } from './scalar_precision.test';
 
 const output = document.getElementById('results')!;
 
@@ -166,9 +167,11 @@ async function run() {
         const upper = Math.min(lower + 1, constants.atmosphereSlices - 1);
         const theta = reference[lower * 8] * (1 - slice % 1) + reference[upper * 8] * (slice % 1);
         const vapor = reference[lower * 8 + 1] * (1 - slice % 1) + reference[upper * 8 + 1] * (slice % 1);
-        const state = new Uint16Array(bytes, index * 512 + 256, 4);
+        const state = constants.preciseScalars ? new Float32Array(bytes, index * 512 + 256, 4)
+            : new Uint16Array(bytes, index * 512 + 256, 4);
         [source.theta - theta, source.vapor - vapor, source.cloud, source.rain].forEach((expected, channel) => {
-            if (Math.abs(halfToFloat(state[channel]) - expected) > 0.02) {
+            const actual = constants.preciseScalars ? state[channel] : halfToFloat(state[channel]);
+            if (Math.abs(actual - expected) > 0.02) {
                 throw new Error('Reset did not preserve the source thermodynamic state.');
             }
         });
@@ -213,6 +216,10 @@ async function run() {
     solver.step(finished);
     device.queue.submit([finished.finish()]);
     expect(solver.paused, 'The simulation stops at the end of the supplied forecasts');
+    await checkScalarPrecision(weather);
+    if (constants.preciseScalars) {
+        expect(true, 'Precise scalar transport preserves small signals and turbulence follows analytic decay');
+    }
     const error = await device.popErrorScope();
     expect(!error, `No WebGPU validation errors${error ? ': ' + error.message : ''}`);
     console.log('Spatial input diagnostics', { initial, evolved });

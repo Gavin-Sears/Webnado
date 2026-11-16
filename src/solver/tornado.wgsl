@@ -369,8 +369,11 @@ fn surfaceExchange(@builtin(global_invocation_id) id: vec3u) {
         let index = id.x + u32(gridDims.x) * id.z;
         var pending = surfaceResidual[index].xy + increment;
         pending.y = max(pending.y, capacity.y * (-air.state.y - state.y));
-        var rounded = quantizeToF16(state.xy + pending / capacity);
-        rounded = select(rounded, vec2f(0), abs(rounded) < vec2f(0.00006103515625));
+        var rounded = state.xy + pending / capacity;
+        if (${preciseScalars} == 0) {
+            rounded = quantizeToF16(rounded);
+            rounded = select(rounded, vec2f(0), abs(rounded) < vec2f(0.00006103515625));
+        }
         // Keep unrepresented heat (J/m2) and water (kg/m2) in full precision.
         surfaceResidual[index] = vec4f(pending - (rounded - state.xy) * capacity, 0, 0);
         state = vec4f(rounded, state.zw);

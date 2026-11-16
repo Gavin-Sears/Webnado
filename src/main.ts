@@ -27,6 +27,12 @@ async function start() {
         url.searchParams.set('precision', value);
         window.location.href = url.href;
     });
+    const scalars = { state: constants.preciseScalars ? '32' : '16' };
+    gui.add(scalars, 'state', { '16 bit': '16', '32 bit': '32' }).name('Scalar precision').onChange((value: string) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('state', value);
+        window.location.href = url.href;
+    });
     gui.add({ domain: domainName }, 'domain', Object.keys(domains)).onChange((domain: string) => {
         const url = new URL(window.location.href);
         url.searchParams.set('domain', domain);

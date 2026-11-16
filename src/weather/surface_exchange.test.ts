@@ -32,13 +32,19 @@ export async function readBuffer(source: GPUBuffer): Promise<ArrayBuffer> {
     return result;
 }
 
+export async function readScalarField(texture: GPUTexture): Promise<Float32Array> {
+    const bytes = await readTexture(texture);
+    return texture.format === 'rgba32float' ? new Float32Array(bytes)
+        : Float32Array.from(new Uint16Array(bytes), halfToFloat);
+}
+
 export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, weather: WeatherData) {
     if (weather.spatial!.manifest.version < 2) return;
     const spatial = weather.spatial!;
     const { gridX, gridY, gridZ, domainX, domainY, domainZ, atmosphereSlices } = constants;
     const dt = 1;
     const steps = 120;
-    const before = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
+    const before = await readScalarField(fields.thermo.textures[fields.thermo.index]);
     weather.writeSpatialTime(0);
     device.queue.writeBuffer(solver['parameters'], 0, new Float32Array([dt, 0, 0, 0, 0, 0, 0, 0]));
     const encoder = device.createCommandEncoder();
@@ -47,7 +53,7 @@ export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, 
         solver['exchangeSurface'](encoder);
     }
     device.queue.submit([encoder.finish()]);
-    const after = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
+    const after = await readScalarField(fields.thermo.textures[fields.thermo.index]);
     const pending = new Float32Array(await readBuffer(solver['surfaceResiduals'][solver['surfaceResidualIndex']]));
     const column = spatial.referenceColumn(atmosphereSlices, domainY, domainX, domainZ);
     const slice = 0.5 / gridY * atmosphereSlices - 0.5;
@@ -70,16 +76,18 @@ export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, 
             const dryDensity = ambient(6) / (1 + 0.001 * ambient(1));
             const residualIndex = 4 * (x + gridX * z);
             const capacity = [dryDensity * 1004 * exner * dy, dryDensity * dy * 0.001];
-            actualHeat += ((halfToFloat(after[index]) - halfToFloat(before[index])) * capacity[0]
+            actualHeat += ((after[index] - before[index]) * capacity[0]
                 + pending[residualIndex]) * area;
-            actualWater += ((halfToFloat(after[index + 1]) - halfToFloat(before[index + 1])) * capacity[1]
+            actualWater += ((after[index + 1] - before[index + 1]) * capacity[1]
                 + pending[residualIndex + 1]) * area;
             expectedHeat += flux[1] * dt * steps * area;
             expectedWater += flux[2] / 2.5e6 * dt * steps * area;
             for (let channel = 0; channel < 2; channel++) {
-                const value = halfToFloat(after[index + channel]);
-                const quantum = Math.max(2 ** -24, 2 ** (Math.floor(Math.log2(Math.abs(value))) - 10));
-                const roundingBound = Math.max(1.01 * quantum, 2 ** -14) + 1e-6;
+                const value = after[index + channel];
+                const bits = constants.preciseScalars ? 23 : 10;
+                const minimum = constants.preciseScalars ? 2 ** -126 : 2 ** -14;
+                const quantum = 2 ** (Math.floor(Math.log2(Math.abs(value))) - bits);
+                const roundingBound = Math.max(1.01 * quantum, minimum) + (constants.preciseScalars ? 1e-7 : 1e-6);
                 if (Math.abs(pending[residualIndex + channel] / capacity[channel]) > roundingBound) {
                     throw new Error(`Pending surface flux at ${x},${z}, channel ${channel}: remainder ${pending[residualIndex + channel]}, value ${value}, quantum ${quantum}`);
                 }
@@ -101,9 +109,10 @@ export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, 
             }
         }
     }
-    const zeros = new Uint16Array(gridX * gridY * gridZ * 4);
+    const zeros = constants.preciseScalars ? new Float32Array(gridX * gridY * gridZ * 4)
+        : new Uint16Array(gridX * gridY * gridZ * 4);
     device.queue.writeTexture({ texture: fields.turbulence.textures[fields.turbulence.index] }, zeros,
-        { bytesPerRow: gridX * 8, rowsPerImage: gridY }, [gridX, gridY, gridZ]);
+        { bytesPerRow: gridX * (constants.preciseScalars ? 16 : 8), rowsPerImage: gridY }, [gridX, gridY, gridZ]);
     const forceEncoder = device.createCommandEncoder();
     solver['dispatch'](forceEncoder, 'atmosphericForces');
     device.queue.submit([forceEncoder.finish()]);

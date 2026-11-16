@@ -61,9 +61,9 @@ export class Fields {
     dustDensity: PingPong;
     dustStorageVersion = 0;
     private dustAllocated: boolean;
-    thermo = new PingPong("thermo", "rgba16float");
+    thermo = new PingPong("thermo", constants.scalarFormat);
     // Turbulence channels are k (m²/s²), viscosity and mixing (m²/s), unused.
-    turbulence = new PingPong("turbulence", "rgba16float");
+    turbulence = new PingPong("turbulence", constants.scalarFormat);
     vorticity = new PingPong("transported vorticity", "rgba16float");
     readonly windForcing = createField("dust feedback acceleration", "rgba16float");
     readonly windForcingView = this.windForcing.createView();

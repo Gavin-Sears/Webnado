@@ -51,6 +51,8 @@ export const constants = {
     atmosphereSlices: domainName === 'supercell' || domainName === 'storm-focus' ? 256 : 64,
     freeSlipGround: Number(domainName === 'supercell' || domainName === 'storm-focus'),
     spatialWeather: Number(spatialCase),
+    preciseScalars: Number(weatherQuery.get('state') === '32'),
+    scalarFormat: weatherQuery.get('state') === '32' ? 'rgba32float' as const : 'rgba16float' as const,
     anelasticAir: Number(['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '')
         && (weatherQuery.get('projection') ?? (spatialCase ? 'anelastic' : 'volume')) === 'anelastic'),
     velocityFormat: (weatherQuery.get('precision') ?? (spatialCase ? '32' : '16')) === '32'
@@ -83,7 +85,10 @@ export function processShaderRaw(raw: string) {
 }
 
 export const fullscreenVertSrc: string = processShaderRaw(fullscreenVertRaw);
-export const raymarchFragSrc: string = processShaderRaw(raymarchFragRaw);
+const raymarchSource = constants.preciseScalars
+    ? raymarchFragRaw.replaceAll('textureSampleLevel(thermo, linearSampler, uvw, 0.0)', 'sampleVolume(thermo, uvw)')
+    : raymarchFragRaw;
+export const raymarchFragSrc: string = processShaderRaw(raymarchSource);
 export const compositeFragSrc: string = processShaderRaw(compositeFragRaw);
 export const bricksComputeSrc: string = processShaderRaw(bricksComputeRaw);
 export const testVolumeComputeSrc: string = processShaderRaw(testVolumeComputeRaw);
