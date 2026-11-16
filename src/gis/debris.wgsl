@@ -6,6 +6,7 @@ struct DebrisParameters {
     spawn: u32,
     enabled: u32,
     viewport: vec2f,
+    seedRegion: vec4f,
 }
 
 struct Particle {
@@ -77,7 +78,7 @@ fn dustVelocityAt(position: vec3f) -> vec3f {
 
 fn surfaceHeight(x: f32, z: f32) -> f32 {
     let column = clamp(worldCell(vec3f(x, 0, z)), vec3i(0), gridDims - 1);
-    var height = cellSize.y;
+    var height = select(cellSize.y, 0.0, ${freeSlipGround} != 0);
     for (var y = 0; y < gridDims.y; y++) {
         if (textureLoad(obstacle, vec3i(column.x, y, column.z), 0).x != 0u) {
             height = f32(y + 1) * cellSize.y;
@@ -93,8 +94,14 @@ fn updateDebris(@builtin(global_invocation_id) id: vec3u) {
     }
     var particle = particles[id.x];
     if (params.spawn != 0u) {
-        let x = (random(id.x * 3u) - 0.5) * domainSize.x * 0.65;
-        let z = (random(id.x * 3u + 1u) - 0.5) * domainSize.z * 0.65;
+        var x = (random(id.x * 3u) - 0.5) * domainSize.x * 0.65;
+        var z = (random(id.x * 3u + 1u) - 0.5) * domainSize.z * 0.65;
+        if (params.seedRegion.w > 0.0) {
+            let radius = params.seedRegion.z * sqrt(random(id.x * 3u));
+            let angle = 6.2831853 * random(id.x * 3u + 1u);
+            x = params.seedRegion.x + radius * cos(angle);
+            z = params.seedRegion.y + radius * sin(angle);
+        }
         let y = surfaceHeight(x, z) + cellSize.y * (0.1 + random(id.x * 3u + 2u));
         particle.position = vec4f(x, y, z, 1);
         particle.velocity = vec4f(0);

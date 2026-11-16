@@ -189,7 +189,8 @@ export class FluidSolver {
             url.searchParams.set('duration', String(this.storm.liftDuration));
             window.location.href = url.href;
         });
-        this.dust.buildGui(gui);
+        this.dust.buildGui(gui, this.storm.enabled
+            ? () => this.storm.cloudRotationLocation ?? this.storm.rotationLocation : undefined);
     }
 
     // Encode once per frame before raymarching; the renderer submits the encoder.

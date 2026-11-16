@@ -37,7 +37,8 @@ async function start() {
     stage.weather.buildGui(gui);
     stage.gis.buildGui(gui);
     stage.solver.buildGui(gui);
-    stage.debris.buildGui(gui);
+    stage.debris.buildGui(gui, stage.solver.storm.enabled
+        ? () => stage.solver.storm.cloudRotationLocation ?? stage.solver.storm.rotationLocation : undefined);
     renderer.buildGui(gui);
 }
 

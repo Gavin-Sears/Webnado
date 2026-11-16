@@ -74,6 +74,7 @@ export class DustFluid {
         }) : undefined;
     private readonly checker = this.readback ? new DivergenceCheck(this.readback, true) : undefined;
     private seedRequested = false;
+    private seedPosition: [number, number] | undefined;
     private resetRequested = false;
     private multigrid: MultigridPressure | undefined;
 
@@ -109,7 +110,7 @@ export class DustFluid {
         return this.kernels[name] = { pipeline, groups: new Map() };
     }
 
-    buildGui(gui: GUI) {
+    buildGui(gui: GUI, rotation?: () => number[] | undefined) {
         const folder = gui.addFolder('Dust fluid');
         folder.add(this, 'enabled').name('Enabled').onChange(() => this.clear());
         folder.add(this, 'loading', 0.0001, 0.2, 0.0001).name('Seed density (kg/m3)');
@@ -117,13 +118,25 @@ export class DustFluid {
         folder.add(this, 'grainDensity', 100, 3000, 10).name('Material density (kg/m3)');
         folder.add(this, 'dynamicViscosity', 0.00001, 2, 0.00001).name('Viscosity (Pa s)');
         folder.add(this, 'seed').name('Seed ground dust');
+        if (rotation) {
+            folder.add({ seed: () => {
+                const position = rotation();
+                if (position) this.seedNear(position);
+            } }, 'seed').name('Seed dust near rotation');
+        }
         folder.add(this, 'clear').name('Clear dust');
     }
 
     seed() {
+        this.seedPosition = undefined;
         this.enabled = true;
         this.hasDust = true;
         this.seedRequested = true;
+    }
+
+    seedNear(position: number[]) {
+        this.seed();
+        this.seedPosition = [position[0], position[2]];
     }
 
     clear() {
@@ -133,9 +146,14 @@ export class DustFluid {
     }
 
     writeParameters() {
+        let seedMode = 0;
+        if (this.seedRequested) {
+            seedMode = this.seedPosition ? 2 : 1;
+        }
         device.queue.writeBuffer(this.parameters, 32, new Float32Array([
             Number(this.enabled), this.grainRadiusMicrons * 1e-6, this.grainDensity,
-            this.dynamicViscosity, Number(this.seedRequested), this.loading, 0, 0
+            this.dynamicViscosity, seedMode,
+            this.loading, this.seedPosition?.[0] ?? 0, this.seedPosition?.[1] ?? 0
         ]));
         this.seedRequested = false;
     }

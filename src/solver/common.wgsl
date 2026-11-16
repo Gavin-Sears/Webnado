@@ -14,9 +14,9 @@ struct SolverParameters {
     grainRadius: f32,
     grainDensity: f32,
     dustViscosity: f32,
-    seedDust: f32,
+    seedDust: f32, // 0 off, 1 broad source, 2 local source
     dustLoading: f32,
-    dustPadding: vec2f,
+    dustSeedCenter: vec2f,
 }
 
 override dustPhase: bool = false;

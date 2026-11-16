@@ -207,8 +207,10 @@ fn transportDustDensity(@builtin(global_invocation_id) id: vec3u) {
         concentration = sampleDustDensity(traceBack(position));
         let world = domainMin + position * cellSize;
         let nearGround = !fluid(cell - vec3i(0, 1, 0)) || !fluid(cell - vec3i(0, 2, 0));
-        if (parameters.seedDust > 0.0 && nearGround
-            && abs(world.x) < 0.325 * domainSize.x && abs(world.z) < 0.325 * domainSize.z) {
+        let broadSource = abs(world.x) < 0.325 * domainSize.x && abs(world.z) < 0.325 * domainSize.z;
+        let localSource = distance(world.xz, parameters.dustSeedCenter) < f32(${dustSeedRadius});
+        let inSource = select(broadSource, localSource, parameters.seedDust > 1.5);
+        if (parameters.seedDust > 0.0 && nearGround && inSource) {
             concentration += parameters.dustLoading;
         }
     }

@@ -52,6 +52,7 @@ export const constants = {
         && new URLSearchParams(window.location.search).get('projection') === 'anelastic'),
     velocityFormat: new URLSearchParams(window.location.search).get('precision') === '32'
         ? 'rgba32float' as const : 'rgba16float' as const,
+    dustSeedRadius: Math.min(1200, 0.15 * domainX),
 
     brickSize: 8    // cells per side of a brick, for skipping empty space
 };

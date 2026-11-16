@@ -45,7 +45,13 @@ export class Stage {
         } else {
             void weather.load();
         }
-        const debris = new Debris(fields, camera, () => solver.dust.seed());
+        const debris = new Debris(fields, camera, position => {
+            if (position) {
+                solver.dust.seedNear(position);
+            } else {
+                solver.dust.seed();
+            }
+        });
 
         return new Stage(site, camera, fields, weather, gis, solver, debris);
     }

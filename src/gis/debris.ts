@@ -1,7 +1,7 @@
 import { GUI } from 'lil-gui';
 
 import { canvas, canvasFormat, context, device, profiler } from '../renderer';
-import { processShaderRaw } from '../shaders/shaders';
+import { constants, processShaderRaw } from '../shaders/shaders';
 import { Camera } from '../stage/camera';
 import { Fields } from '../stage/fields';
 import source from './debris.wgsl?raw';
@@ -21,7 +21,7 @@ export class Debris {
 
     private readonly parameters = device.createBuffer({
         label: 'debris parameters',
-        size: 32,
+        size: 48,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
     private readonly updatePipeline: GPUComputePipeline;
@@ -31,10 +31,12 @@ export class Debris {
     private renderGroup: GPUBindGroup | undefined;
     private depthTexture: GPUTexture | undefined;
     private spawnRequested = false;
+    private seedPosition: [number, number] | undefined;
     private clearRequested = false;
     private resetVersion = 0;
 
-    constructor(private readonly fields: Fields, private readonly camera: Camera, private readonly seedDust: () => void) {
+    constructor(private readonly fields: Fields, private readonly camera: Camera,
+        private readonly seedDust: (position?: number[]) => void) {
         const module = device.createShaderModule({ label: 'debris', code: processShaderRaw(source) });
         this.updatePipeline = device.createComputePipeline({
             label: 'debris update',
@@ -63,18 +65,25 @@ export class Debris {
         }));
     }
 
-    buildGui(gui: GUI) {
+    buildGui(gui: GUI, rotation?: () => number[] | undefined) {
         const folder = gui.addFolder('Dust tracers');
         folder.add(this, 'enabled').name('Enabled');
         folder.add(this, 'restitution', 0, 0.8, 0.05).name('Bounce');
         folder.add(this, 'friction', 0, 1, 0.05).name('Friction');
         folder.add(this, 'size', 1, 6, 0.5).name('Display size (px)');
         folder.add(this, 'seed').name('Seed dust and tracers');
+        if (rotation) {
+            folder.add({ seed: () => {
+                const position = rotation();
+                if (position) this.seed(position);
+            } }, 'seed').name('Seed near rotation');
+        }
         folder.add(this, 'clear').name('Clear tracers');
     }
 
-    seed() {
-        this.seedDust();
+    seed(position?: number[]) {
+        this.seedPosition = position ? [position[0], position[2]] : undefined;
+        this.seedDust(position);
         this.spawnRequested = true;
     }
 
@@ -96,12 +105,17 @@ export class Debris {
             encoder.clearBuffer(this.particles);
             this.clearRequested = false;
         }
-        const data = new ArrayBuffer(32);
+        const data = new ArrayBuffer(48);
         new Float32Array(data).set([
             dt, this.restitution, this.friction, this.size, 0, 0,
             canvas.width, canvas.height
         ]);
         new Uint32Array(data).set([Number(this.spawnRequested), Number(this.enabled)], 4);
+        if (this.seedPosition) {
+            new Float32Array(data).set([
+                ...this.seedPosition, constants.dustSeedRadius, 1
+            ], 8);
+        }
         device.queue.writeBuffer(this.parameters, 0, data);
         this.spawnRequested = false;
 
