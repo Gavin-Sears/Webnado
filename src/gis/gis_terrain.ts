@@ -28,7 +28,7 @@ export class GisTerrain {
     private rebakeRequested = false;
     private readonly attribution = document.createElement('div');
 
-    source = 'demo';
+    source = new URLSearchParams(location.search).get('case') === 'elreno' ? 'flat' : 'demo';
     tilesetUrl = 'https://raw.githubusercontent.com/CesiumGS/3d-tiles-samples/main/1.0/TilesetWithDiscreteLOD/tileset.json';
     latitude: number;
     longitude: number;
@@ -55,6 +55,7 @@ export class GisTerrain {
         const ground = new THREE.PlaneGeometry(60000, 60000).rotateX(-Math.PI / 2);
         this.scene.add(new THREE.Mesh(ground, new THREE.MeshStandardMaterial({ color: 0x4a5a3c, roughness: 1 })));
         this.scene.add(this.demo);
+        this.demo.visible = this.source === 'demo';
         const scale = constants.domainX / 12800;
         for (const [x, z, height] of [[-1200, 0, 800], [1100, -600, 600], [700, 1300, 450]]) {
             const building = new THREE.Mesh(
@@ -93,7 +94,7 @@ export class GisTerrain {
 
     buildGui(gui: GUI) {
         const folder = gui.addFolder('GIS and collisions');
-        folder.add(this, 'source', ['demo', 'sample', 'cesium', 'url']).name('Source');
+        folder.add(this, 'source', ['flat', 'demo', 'sample', 'cesium', 'url']).name('Source');
         folder.add(this, 'tilesetUrl').name('Tileset URL');
         folder.add(this, 'latitude', -85, 85, 0.0001).name('Latitude');
         folder.add(this, 'longitude', -180, 180, 0.0001).name('Longitude');
@@ -122,7 +123,7 @@ export class GisTerrain {
         this.site.longitude = this.longitude;
         this.site.elevation = this.elevation;
 
-        if (this.source === 'demo') {
+        if (this.source === 'demo' || this.source === 'flat') {
             void this.bakeCollisions();
         } else {
             const generation = this.generation;
@@ -164,7 +165,7 @@ export class GisTerrain {
             const objects = this.demo.visible
                 ? [{ scene: this.demo, material: 2 }]
                 : this.layers.flatMap(layer => layer.loadedScenes().map(scene => ({ scene, material: layer.material })));
-            if (objects.length === 0) {
+            if (objects.length === 0 && this.source !== 'flat') {
                 this.status = 'No visible tiles to bake; wait for loading or move toward the scene';
                 return;
             }

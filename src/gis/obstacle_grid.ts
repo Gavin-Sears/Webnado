@@ -4,7 +4,11 @@ import { constants } from '../shaders/shaders';
 
 export class ObstacleGrid {
     readonly materials = new Uint8Array(constants.gridX * constants.gridY * constants.gridZ);
-    private readonly cellSize = constants.domainX / constants.gridX;
+    private readonly cellSize = new Vector3(
+        constants.domainX / constants.gridX,
+        constants.domainY / constants.gridY,
+        constants.domainZ / constants.gridZ
+    );
     private readonly origin = new Vector3(-constants.domainX / 2, 0, -constants.domainZ / 2);
 
     constructor() {
@@ -49,8 +53,8 @@ export class ObstacleGrid {
                 triangle.b.fromBufferAttribute(positions, indices ? indices.getX(start + 1) : start + 1).applyMatrix4(transform);
                 triangle.c.fromBufferAttribute(positions, indices ? indices.getX(start + 2) : start + 2).applyMatrix4(transform);
                 bounds.setFromPoints([triangle.a, triangle.b, triangle.c]);
-                low.copy(bounds.min).sub(this.origin).divideScalar(this.cellSize).floor();
-                high.copy(bounds.max).sub(this.origin).divideScalar(this.cellSize).floor();
+                low.copy(bounds.min).sub(this.origin).divide(this.cellSize).floor();
+                high.copy(bounds.max).sub(this.origin).divide(this.cellSize).floor();
                 if (high.x < 0 || high.y < 0 || high.z < 0
                     || low.x >= gridX || low.y >= gridY || low.z >= gridZ) {
                     continue;
@@ -60,8 +64,8 @@ export class ObstacleGrid {
                 for (let z = low.z; z <= high.z; z++) {
                     for (let y = low.y; y <= high.y; y++) {
                         for (let x = low.x; x <= high.x; x++) {
-                            cellBounds.min.set(x, y, z).multiplyScalar(this.cellSize).add(this.origin);
-                            cellBounds.max.copy(cellBounds.min).addScalar(this.cellSize);
+                            cellBounds.min.set(x, y, z).multiply(this.cellSize).add(this.origin);
+                            cellBounds.max.copy(cellBounds.min).add(this.cellSize);
                             if (cellBounds.intersectsTriangle(triangle)) {
                                 top[x + gridX * z] = Math.max(top[x + gridX * z], y);
                             }
