@@ -34,6 +34,8 @@ const requestedDomain = new URLSearchParams(window.location.search).get('domain'
     ?? (['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '') ? 'supercell' : 'storm');
 export const domainName = Object.hasOwn(domains, requestedDomain) ? requestedDomain as keyof typeof domains : 'storm';
 const [domainX, domainY, domainZ] = domains[domainName];
+const weatherQuery = new URLSearchParams(window.location.search);
+const spatialCase = weatherQuery.get('case') === 'hrrr';
 
 // Declared this way so minification keeps values that only shaders use
 export const constants = {
@@ -48,10 +50,10 @@ export const constants = {
 
     atmosphereSlices: domainName === 'supercell' || domainName === 'storm-focus' ? 256 : 64,
     freeSlipGround: Number(domainName === 'supercell' || domainName === 'storm-focus'),
-    spatialWeather: Number(new URLSearchParams(window.location.search).get('case') === 'hrrr'),
+    spatialWeather: Number(spatialCase),
     anelasticAir: Number(['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '')
-        && new URLSearchParams(window.location.search).get('projection') === 'anelastic'),
-    velocityFormat: new URLSearchParams(window.location.search).get('precision') === '32'
+        && (weatherQuery.get('projection') ?? (spatialCase ? 'anelastic' : 'volume')) === 'anelastic'),
+    velocityFormat: (weatherQuery.get('precision') ?? (spatialCase ? '32' : '16')) === '32'
         ? 'rgba32float' as const : 'rgba16float' as const,
     dustSeedRadius: Math.min(1200, 0.15 * domainX),
 

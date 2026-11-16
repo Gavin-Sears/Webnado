@@ -159,7 +159,7 @@ export class FluidSolver {
     buildGui(gui: GUI) {
         const folder = gui.addFolder('Fluid solver');
         folder.add(this, 'dt', 0.05, this.storm.enabled ? 2 : 1, 0.05).name('Time step (s)');
-        folder.add(this, 'paused').name('Pause simulation');
+        folder.add(this, 'paused').name('Pause simulation').listen();
         const jacobi = folder.add(this, 'jacobiIterations', 1, 200, 1).name('Jacobi iterations').hide();
         const multigrid = folder.add(this, 'multigridCycles', 1, 8, 1).name('Multigrid cycles');
         folder.add(this, 'pressureMethod', ['multigrid', 'jacobi']).name('Pressure solver').onChange(() => {

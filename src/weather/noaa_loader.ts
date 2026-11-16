@@ -35,10 +35,12 @@ export class WeatherData {
     status = "Standard atmosphere, until a sounding loads.";
     scenario: 'weather' | 'elreno' | 'hrrr' = 'weather';
     spatial: SpatialWeather | undefined;
+    validTime = '';
     version = 0;
 
     private loading = false;
     private request: AbortController | undefined;
+    private spatialStart = 0;
     private refreshStatus = () => {};
     // Stage points this at the solver. A new column clears the cloud left by the previous one.
     onApplied = () => {};
@@ -67,6 +69,9 @@ export class WeatherData {
         this.setAtmosphere(column);
         device.queue.writeBuffer(this.atmosphereBuffer, offset, spatial.values);
         this.spatial = spatial;
+        this.spatialStart = Date.parse(spatial.manifest.sources[0].initializationUtc)
+            + spatial.manifest.forecastHours[0] * 3600000;
+        this.writeSpatialTime(0);
         this.scenario = 'hrrr';
         Object.assign(this.site, spatial.manifest.center);
         this.status = 'HRRR spatial experiment · no synthetic storm trigger · warm-rain physics only';
@@ -76,6 +81,7 @@ export class WeatherData {
     writeSpatialTime(seconds: number) {
         const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4 + 64;
         device.queue.writeBuffer(this.atmosphereBuffer, offset, new Float32Array([seconds]));
+        this.validTime = new Date(this.spatialStart + seconds * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
     }
 
     setAtmosphere(values: Float32Array, status?: string) {
@@ -114,8 +120,16 @@ export class WeatherData {
     buildGui(gui: GUI) {
         const folder = gui.addFolder("Weather");
         if (this.spatial) {
-            folder.add(this, 'status').name('Source').disable();
+            const description = {
+                source: this.spatial.manifest.forecastHours[0] ? 'HRRR model forecast' : 'HRRR model analysis',
+                physics: 'Warm rain; ice not evolved',
+                trigger: 'No synthetic storm trigger'
+            };
+            folder.add(description, 'source').name('Source').disable();
+            folder.add(description, 'physics').name('Physics').disable();
+            folder.add(description, 'trigger').name('Initiation').disable();
             folder.add(this.spatial.manifest.sources[0], 'initializationUtc').name('Model initialization').disable();
+            folder.add(this, 'validTime').name('Weather time').listen().disable();
             folder.add(this.spatial.manifest, 'groundMsl').name('Box floor MSL (m)').disable();
             return;
         }
