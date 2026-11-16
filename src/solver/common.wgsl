@@ -53,7 +53,7 @@ override dustPhase: bool = false;
 struct StormParameters {
     timing: vec4f,  // enabled, elapsed, lifting duration, target updraft
     region: vec4f,  // horizontal radius, vertical radius, unused
-    damping: vec4f, // damping height, inverse timescale, unused
+    damping: vec4f, // damping height, inverse timescale, unused, reference stress balance
 }
 @group(0) @binding(29) var<uniform> storm: StormParameters;
 @group(0) @binding(30) var airGradientZOut: texture_storage_3d<rgba16float, write>;

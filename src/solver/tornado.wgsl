@@ -140,6 +140,20 @@ fn energy(@builtin(global_invocation_id) id: vec3u) {
     textureStore(turbulenceOut, cell, result);
 }
 
+fn referenceVelocity(cell: vec3i) -> vec3f {
+    let height = f32(clamp(cell.y, 0, gridDims.y - 1)) + 0.5;
+    let air = background(height);
+    return quantizeToF16(vec3f(air.state.z, 0, air.state.w));
+}
+
+fn referenceDerivative(cell: vec3i, axis: i32) -> vec3f {
+    if (axis != 1) {
+        return vec3f(0);
+    }
+    let offset = axisOffset(axis);
+    return (referenceVelocity(cell + offset) - referenceVelocity(cell - offset)) / (2.0 * cellSize[axis]);
+}
+
 fn stress(rawCell: vec3i, axis: i32) -> vec3f {
     var cell = rawCell;
     var neighbor = cell + axisOffset(axis);
@@ -154,11 +168,19 @@ fn stress(rawCell: vec3i, axis: i32) -> vec3f {
 
     let viscosity = 0.5 * (textureLoad(turbulenceIn, cell, 0).y
         + textureLoad(turbulenceIn, neighbor, 0).y);
-    let derivative = (centerVelocity(neighbor) - centerVelocity(cell)) / cellSize[axis];
+    var derivative = (centerVelocity(neighbor) - centerVelocity(cell)) / cellSize[axis];
+    if (storm.timing.x > 0.0 && storm.damping.w > 0.0) {
+        // The experiment maintains its reference column against background turbulent stress.
+        derivative -= (referenceVelocity(neighbor) - referenceVelocity(cell)) / cellSize[axis];
+    }
     var transpose = vec3f(0);
     for (var component = 0; component < 3; component++) {
         transpose[component] = 0.5 * (cachedDerivative(cell, component)[axis]
             + cachedDerivative(neighbor, component)[axis]);
+        if (storm.timing.x > 0.0 && storm.damping.w > 0.0) {
+            transpose[component] -= 0.5 * (referenceDerivative(cell, component)[axis]
+                + referenceDerivative(neighbor, component)[axis]);
+        }
     }
     return viscosity * (derivative + transpose);
 }
@@ -176,9 +198,12 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
         for (var axis = 0; axis < 3; axis++) {
             let offset = axisOffset(axis);
             force += (stress(cell, axis) - stress(cell - offset, axis)) / cellSize[axis];
-            let lower = scalarNeighbor(turbulenceIn, cell, cell - offset).x;
-            let upper = scalarNeighbor(turbulenceIn, cell, cell + offset).x;
-            force[axis] -= (upper - lower) / (3.0 * cellSize[axis]);
+            // The balanced experiment absorbs the isotropic 2k/3 stress into pressure.
+            if (storm.timing.x == 0.0 || storm.damping.w == 0.0) {
+                let lower = scalarNeighbor(turbulenceIn, cell, cell - offset).x;
+                let upper = scalarNeighbor(turbulenceIn, cell, cell + offset).x;
+                force[axis] -= (upper - lower) / (3.0 * cellSize[axis]);
+            }
         }
         if (storm.timing.x > 0.0) {
             let world = domainMin + (vec3f(cell) + vec3f(0.5)) * cellSize;

@@ -13,6 +13,7 @@ export class StormExperiment {
     radius = 10000;
     liftHeight = 1500;
     highOrder = true;
+    balanceReference = new URLSearchParams(location.search).get('balance') !== 'off';
     followStorm = new URLSearchParams(location.search).get('follow') === '1';
     windowEast = 0;
     windowNorth = 0;
@@ -54,7 +55,7 @@ export class StormExperiment {
         device.queue.writeBuffer(this.buffer, 0, new Float32Array([
             Number(this.enabled), this.elapsed, this.liftDuration, this.liftSpeed,
             this.radius, this.liftHeight, this.shiftX, this.shiftZ,
-            Math.min(14000, 0.8 * constants.domainY), 1 / 300, 0, 0
+            Math.min(14000, 0.8 * constants.domainY), 1 / 300, 0, Number(this.balanceReference)
         ]));
         if (this.enabled) {
             this.elapsed += dt;

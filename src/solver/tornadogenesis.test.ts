@@ -32,11 +32,12 @@ async function run() {
     solver.turbulence = query.get('turbulence') !== 'off';
     solver.storm.highOrder = query.get('advection') !== 'first';
     const equilibrium = query.get('control') === 'equilibrium';
-    if (equilibrium) {
+    const unforced = equilibrium || query.get('control') === 'reference';
+    if (unforced) {
         solver.storm.liftSpeed = 0;
-        solver.turbulence = false;
         solver.confinement = 0;
     }
+    if (equilibrium) solver.turbulence = false;
     const steps = Number(query.get('steps') ?? 3600);
     const reportEvery = Number(query.get('reportEvery') ?? 100);
 
@@ -57,7 +58,7 @@ async function run() {
                 if (report.divergenceRms > 5e-4) {
                     throw new Error('Pressure projection exceeded the interior divergence target.');
                 }
-                if (equilibrium && (report.updraft > 0.001 || report.temperature > 0.001
+                if (unforced && (report.updraft > 0.001 || report.temperature > 0.001
                     || report.interiorVerticalVorticity > 1e-6)) {
                     throw new Error('The unperturbed atmosphere developed artificial motion.');
                 }
