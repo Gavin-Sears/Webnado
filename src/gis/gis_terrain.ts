@@ -8,6 +8,7 @@ import type { Site } from "../stage/stage";
 import { Fields } from "../stage/fields";
 import { ObstacleGrid } from "./obstacle_grid";
 import { TileLayer } from "./tile_layer";
+import type { SpatialWeather } from '../weather/spatial_weather';
 
 // Draws terrain and buildings with Three.js into its own render target
 // Input: a Site and the camera
@@ -28,7 +29,7 @@ export class GisTerrain {
     private rebakeRequested = false;
     private readonly attribution = document.createElement('div');
 
-    source = new URLSearchParams(location.search).get('case') === 'elreno' ? 'flat' : 'demo';
+    source = ['elreno', 'hrrr'].includes(new URLSearchParams(location.search).get('case') ?? '') ? 'flat' : 'demo';
     tilesetUrl = 'https://raw.githubusercontent.com/CesiumGS/3d-tiles-samples/main/1.0/TilesetWithDiscreteLOD/tileset.json';
     latitude: number;
     longitude: number;
@@ -92,8 +93,41 @@ export class GisTerrain {
         await this.bakeCollisions();
     }
 
+    useSpatialTerrain(weather: SpatialWeather) {
+        const { gridX, gridY, gridZ, domainX, domainY, domainZ } = constants;
+        const ground = weather.manifest.groundMsl;
+        const materials = new Uint8Array(gridX * gridY * gridZ);
+        for (let z = 0; z < gridZ; z++) {
+            for (let x = 0; x < gridX; x++) {
+                const sample = weather.sample((x + 0.5) / gridX * domainX - domainX / 2,
+                    0, (z + 0.5) / gridZ * domainZ - domainZ / 2);
+                for (let y = 0; y < gridY; y++) {
+                    if ((y + 0.5) / gridY * domainY + ground < sample.terrain) {
+                        materials[x + gridX * (y + gridY * z)] = 1;
+                    }
+                }
+            }
+        }
+        const geometry = new THREE.PlaneGeometry(domainX, domainZ, gridX, gridZ).rotateX(-Math.PI / 2);
+        const positions = geometry.getAttribute('position');
+        for (let index = 0; index < positions.count; index++) {
+            positions.setY(index, weather.sample(positions.getX(index), 0, positions.getZ(index)).terrain - ground);
+        }
+        geometry.computeVertexNormals();
+        this.scene.add(new THREE.Mesh(geometry,
+            new THREE.MeshStandardMaterial({ color: 0x4a5a3c, roughness: 1 })));
+        this.materials = materials;
+        this.fields?.setObstacles(materials);
+        this.status = 'HRRR terrain · elevations from the weather grid';
+        this.invalidate();
+    }
+
     buildGui(gui: GUI) {
         const folder = gui.addFolder('GIS and collisions');
+        if (constants.spatialWeather) {
+            folder.add(this, 'status').name('Source').disable();
+            return;
+        }
         folder.add(this, 'source', ['flat', 'demo', 'sample', 'cesium', 'url']).name('Source');
         folder.add(this, 'tilesetUrl').name('Tileset URL');
         folder.add(this, 'latitude', -85, 85, 0.0001).name('Latitude');

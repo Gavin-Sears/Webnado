@@ -8,6 +8,9 @@ fn sampleFieldComponent(field: texture_3d<f32>, rawPosition: vec3f, axis: i32) -
     let position = phasePosition(rawPosition);
     if (!dustPhase && (position.x < 0.0 || position.z < 0.0
         || position.x > f32(gridDims.x) || position.z > f32(gridDims.z))) {
+        if (spatialWeather) {
+            return spatialState(position).wind[axis];
+        }
         if (axis == 1) {
             return 0.0;
         }
@@ -61,6 +64,9 @@ fn sampleVelocity(position: vec3f) -> vec3f {
 
 fn sampleThermoField(field: texture_3d<f32>, position: vec3f) -> vec4f {
     if (any(position < vec3f(0)) || any(position >= vec3f(gridDims))) {
+        if (spatialWeather && !dustPhase) {
+            return spatialState(position).thermo - vec4f(background(position.y).state.xy, 0, 0);
+        }
         return vec4f(0);
     }
 
@@ -153,7 +159,7 @@ fn advect(@builtin(global_invocation_id) id: vec3u) {
         thermo = sampleThermo(departure);
         thermo += vec4f(background(departure.y).state.xy - background(position.y).state.xy, 0.0, 0.0);
 
-        if (storm.timing.x > 0.0 && (departure.x < 0.5 || departure.z < 0.5
+        if (!spatialWeather && storm.timing.x > 0.0 && (departure.x < 0.5 || departure.z < 0.5
             || departure.x > f32(gridDims.x) - 0.5 || departure.z > f32(gridDims.z) - 0.5)) {
             thermo = vec4f(0);
         }

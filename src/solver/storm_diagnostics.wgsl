@@ -34,6 +34,18 @@ fn center(cell: vec3i) -> vec3f {
     ));
 }
 
+fn groundRow(cell: vec3i) -> i32 {
+    if (${spatialWeather} == 0) {
+        return 0;
+    }
+    for (var y = 0; y < gridDims.y; y++) {
+        if (textureLoad(materials, vec3i(cell.x, y, cell.z), 0).x == 0u) {
+            return y;
+        }
+    }
+    return gridDims.y;
+}
+
 @compute @workgroup_size(128)
 fn main(@builtin(local_invocation_index) local: u32,
     @builtin(workgroup_id) group: vec3u) {
@@ -56,7 +68,8 @@ fn main(@builtin(local_invocation_index) local: u32,
         let dz = (center(cell + vec3i(0, 0, 1)) - center(cell - vec3i(0, 0, 1))) / (2.0 * cellSize.z);
         let signedCurl = dz.x - dx.z;
         let verticalCurl = abs(signedCurl);
-        let height = (f32(cell.y) + 0.5) * cellSize.y;
+        let surfaceRow = groundRow(cell);
+        let height = (f32(cell.y - surfaceRow) + 0.5) * cellSize.y;
         let world = domainMin + (vec3f(cell) + vec3f(0.5)) * cellSize;
         let sideDistance = min(min(world.x - domainMin.x, -domainMin.x - world.x),
             min(world.z - domainMin.z, -domainMin.z - world.z));
@@ -72,8 +85,8 @@ fn main(@builtin(local_invocation_index) local: u32,
             let strength = 0.5 * sqrt(max(0.0, 4.0 * determinant - trace * trace));
             swirlLocation = vec4f(world, strength);
             if (strength > 0.0) {
-                let firstCloudRow = max(cell.y + 1, i32(500.0 / cellSize.y));
-                let lastCloudRow = min(gridDims.y, i32(3000.0 / cellSize.y));
+                let firstCloudRow = max(cell.y + 1, surfaceRow + i32(500.0 / cellSize.y));
+                let lastCloudRow = min(gridDims.y, surfaceRow + i32(3000.0 / cellSize.y));
                 for (var y = firstCloudRow; y < lastCloudRow; y++) {
                     let above = vec3i(cell.x, y, cell.z);
                     if (textureLoad(thermo, above, 0).z > 0.1 && center(above).y > 2.0) {

@@ -4,6 +4,7 @@ import { WeatherData } from "../weather/noaa_loader";
 import { Camera } from "./camera";
 import { Fields } from "./fields";
 import { Debris } from "../gis/debris";
+import { constants } from '../shaders/shaders';
 
 // The center of the simulated box on Earth, shared by weather and tiles
 export interface Site {
@@ -30,17 +31,30 @@ export class Stage {
     static async create(): Promise<Stage> {
         const site = DEFAULT_SITE;
         const camera = new Camera();
-        const atmosphericCase = new URLSearchParams(location.search).get('case') === 'elreno';
+        const query = new URLSearchParams(location.search);
+        const atmosphericCase = ['elreno', 'hrrr'].includes(query.get('case') ?? '');
         const fields = new Fields(!atmosphericCase);
 
         const weather = new WeatherData(site);
+        if (constants.spatialWeather) {
+            const input = query.get('weather');
+            if (!input) {
+                throw new Error('The HRRR experiment needs a spatial weather manifest URL (?weather=...).');
+            }
+            await weather.loadSpatial(input);
+        }
 
         const gis = await GisTerrain.create(site);
         await gis.connect(fields);
+        if (weather.spatial) {
+            gis.useSpatialTerrain(weather.spatial);
+        }
 
         const solver = new FluidSolver(fields, weather);
         weather.onApplied = () => solver.reset();
-        if (atmosphericCase) {
+        if (constants.spatialWeather) {
+            solver.startSpatialExperiment();
+        } else if (atmosphericCase) {
             solver.startElRenoExperiment();
         } else {
             void weather.load();

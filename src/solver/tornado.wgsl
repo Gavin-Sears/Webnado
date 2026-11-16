@@ -206,7 +206,7 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
                 force[axis] -= (upper - lower) / (3.0 * cellSize[axis]);
             }
         }
-        if (storm.timing.x > 0.0) {
+        if (storm.timing.x > 0.0 && !spatialWeather) {
             let world = domainMin + (vec3f(cell) + vec3f(0.5)) * cellSize;
             let velocity = centerVelocity(cell);
             let air = background(f32(cell.y) + 0.5);
@@ -299,8 +299,20 @@ fn resetFields(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let wind = quantizeToF16(background(f32(cell.y) + 0.5).state.zw);
-    textureStore(velocityOut, cell, vec4f(wind.x, 0, wind.y, 0));
-    textureStore(thermoOut, cell, vec4f(0));
+    var velocity = vec3f(wind.x, 0, wind.y);
+    var thermo = vec4f(0);
+    if (spatialWeather) {
+        let position = vec3f(cell) + vec3f(0.5);
+        let state = spatialFrame(position, 0u);
+        thermo = state.thermo - vec4f(background(position.y).state.xy, 0, 0);
+        for (var axis = 0; axis < 3; axis++) {
+            var offset = vec3f(0.5);
+            offset[axis] = 0.0;
+            velocity[axis] = spatialFrame(vec3f(cell) + offset, 0u).wind[axis];
+        }
+    }
+    textureStore(velocityOut, cell, vec4f(velocity, 0));
+    textureStore(thermoOut, cell, thermo);
     textureStore(vorticityOut, cell, vec4f(0));
     textureStore(turbulenceOut, cell, vec4f(0));
 }

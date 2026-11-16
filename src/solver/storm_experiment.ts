@@ -7,6 +7,7 @@ import { StormDiagnostics, type StormReport } from './storm_diagnostics';
 
 export class StormExperiment {
     enabled = false;
+    weatherDriven = false;
     elapsed = 0;
     liftDuration = 1200;
     liftSpeed = 10;
@@ -58,10 +59,12 @@ export class StormExperiment {
         folder.add(this, 'groundSwirl').name('Ground swirling strength (1/s)').listen().disable();
         folder.add(this, 'cloudOverheadSwirl').name('Ground swirl under rising cloud (1/s)').listen().disable();
         folder.add(this, 'divergence').name('Constraint error RMS (1/s)').listen().disable();
-        folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
-        folder.add(this, 'liftSpeed', 1, 20, 1).name('Initial updraft (m/s)');
+        if (!this.weatherDriven) {
+            folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
+            folder.add(this, 'liftSpeed', 1, 20, 1).name('Initial updraft (m/s)');
+        }
         folder.add(this, 'highOrder').name('Higher-order advection');
-        folder.add(this, 'followStorm').name('Move window (experimental)');
+        folder.add(this, 'followStorm').name('Move window (experimental)').disable(this.weatherDriven);
         folder.add(this, 'windowEast').name('Window east offset (m)').listen().disable();
         folder.add(this, 'windowNorth').name('Window north offset (m)').listen().disable();
     }
@@ -75,7 +78,8 @@ export class StormExperiment {
         if (this.enabled) {
             this.elapsed += dt;
         }
-        this.phase = !this.enabled ? 'Off' : this.elapsed < this.liftDuration ? 'Initial lifting' : 'Free evolution';
+        this.phase = !this.enabled ? 'Off' : this.weatherDriven ? 'Weather-driven experiment'
+            : this.elapsed < this.liftDuration ? 'Initial lifting' : 'Free evolution';
     }
 
     observe(fields: Fields, atmosphere: GPUBuffer) {

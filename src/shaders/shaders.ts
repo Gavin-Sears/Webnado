@@ -31,7 +31,7 @@ export const domains = {
     'storm-focus': [32000, 18000, 32000]
 } as const;
 const requestedDomain = new URLSearchParams(window.location.search).get('domain')
-    ?? (new URLSearchParams(window.location.search).get('case') === 'elreno' ? 'supercell' : 'storm');
+    ?? (['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '') ? 'supercell' : 'storm');
 export const domainName = Object.hasOwn(domains, requestedDomain) ? requestedDomain as keyof typeof domains : 'storm';
 const [domainX, domainY, domainZ] = domains[domainName];
 
@@ -48,7 +48,8 @@ export const constants = {
 
     atmosphereSlices: domainName === 'supercell' || domainName === 'storm-focus' ? 256 : 64,
     freeSlipGround: Number(domainName === 'supercell' || domainName === 'storm-focus'),
-    anelasticAir: Number(new URLSearchParams(window.location.search).get('case') === 'elreno'
+    spatialWeather: Number(new URLSearchParams(window.location.search).get('case') === 'hrrr'),
+    anelasticAir: Number(['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '')
         && new URLSearchParams(window.location.search).get('projection') === 'anelastic'),
     velocityFormat: new URLSearchParams(window.location.search).get('precision') === '32'
         ? 'rgba32float' as const : 'rgba16float' as const,

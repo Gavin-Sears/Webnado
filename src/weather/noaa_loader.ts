@@ -4,6 +4,7 @@ import { device } from "../renderer";
 import { constants, domainName } from "../shaders/shaders";
 import type { Site } from "../stage/stage";
 import { cm1Atmosphere } from './cm1_sounding';
+import { SpatialWeather } from './spatial_weather';
 import elRenoSounding from './cases/elreno-2011.txt?raw';
 import elRenoMetadata from './cases/elreno-2011.source.json';
 import {
@@ -32,7 +33,8 @@ export class WeatherData {
     date = "2024-05-21";
     hour = 21;
     status = "Standard atmosphere, until a sounding loads.";
-    scenario: 'weather' | 'elreno' = 'weather';
+    scenario: 'weather' | 'elreno' | 'hrrr' = 'weather';
+    spatial: SpatialWeather | undefined;
     version = 0;
 
     private loading = false;
@@ -44,10 +46,36 @@ export class WeatherData {
     constructor(readonly site: Site) {
         this.atmosphereBuffer = device.createBuffer({
             label: "atmosphere",
-            size: constants.atmosphereSlices * VALUES_PER_SLICE * 4,
+            size: constants.spatialWeather ? 96 * 1024 * 1024 : constants.atmosphereSlices * VALUES_PER_SLICE * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
         this.setAtmosphere(this.placeholderAtmosphere());
+    }
+
+    async loadSpatial(url: string) {
+        const spatial = await SpatialWeather.load(url);
+        const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4;
+        if (offset + spatial.values.byteLength > this.atmosphereBuffer.size) {
+            throw new Error('The extracted weather exceeds this experiment’s GPU input budget.');
+        }
+        const column = spatial.referenceColumn(constants.atmosphereSlices,
+            constants.domainY, constants.domainX, constants.domainZ);
+        const corrections = spatial.balanceBoundaryFlux(column,
+            [constants.gridX, constants.gridY, constants.gridZ],
+            [constants.domainX, constants.domainY, constants.domainZ], !!constants.anelasticAir);
+        console.log('Weather boundary mass correction (m/s, outward normal)', corrections);
+        this.setAtmosphere(column);
+        device.queue.writeBuffer(this.atmosphereBuffer, offset, spatial.values);
+        this.spatial = spatial;
+        this.scenario = 'hrrr';
+        Object.assign(this.site, spatial.manifest.center);
+        this.status = 'HRRR spatial experiment · no synthetic storm trigger · warm-rain physics only';
+        this.refreshStatus();
+    }
+
+    writeSpatialTime(seconds: number) {
+        const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4 + 64;
+        device.queue.writeBuffer(this.atmosphereBuffer, offset, new Float32Array([seconds]));
     }
 
     setAtmosphere(values: Float32Array, status?: string) {
@@ -85,6 +113,12 @@ export class WeatherData {
     // Location, date, UTC hour, and load. The dry buttons are a fixed column, so the wind can be seen on its own.
     buildGui(gui: GUI) {
         const folder = gui.addFolder("Weather");
+        if (this.spatial) {
+            folder.add(this, 'status').name('Source').disable();
+            folder.add(this.spatial.manifest.sources[0], 'initializationUtc').name('Model initialization').disable();
+            folder.add(this.spatial.manifest, 'groundMsl').name('Box floor MSL (m)').disable();
+            return;
+        }
         folder.add(this.site, "latitude", -90, 90, 0.01).name("Latitude");
         folder.add(this.site, "longitude", -180, 180, 0.01).name("Longitude");
         folder.add(this, "date").name("Date");

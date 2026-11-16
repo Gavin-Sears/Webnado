@@ -166,13 +166,13 @@ export class FluidSolver {
             multigrid.show(this.pressureMethod === 'multigrid');
         });
         folder.add(this, 'buoyancy', 0, 2, 0.1).name('Buoyancy');
-        folder.add(this, 'confinement', 0, 0.5, 0.005).name('Vorticity confinement');
+        folder.add(this, 'confinement', 0, 0.5, 0.005).name('Vorticity confinement').disable(!!constants.spatialWeather);
         folder.add(this, 'turbulence').name('Turbulent mixing');
         folder.add(this, 'mixing', 0, 0.5, 0.01).name('Mixing coefficient');
         folder.add(this.warmRain, 'enabled').name('Warm-rain microphysics');
         folder.add(this, 'transportedVorticity').name('Transport vorticity');
-        folder.add(this, 'addThermal').name('Add warm thermal');
-        folder.add(this, 'startShearExperiment').name('Start shear experiment');
+        folder.add(this, 'addThermal').name('Add warm thermal').disable(!!constants.spatialWeather);
+        folder.add(this, 'startShearExperiment').name('Start shear experiment').disable(!!constants.spatialWeather);
         folder.add(this, 'reset').name('Reset simulation');
         this.storm.buildGui(gui, domain => {
             const url = new URL(window.location.href);
@@ -200,6 +200,17 @@ export class FluidSolver {
         }
         if (this.dust.enabled) {
             this.fields.enableDustFields();
+        }
+        if (this.weather.spatial) {
+            const horizon = (this.weather.spatial.manifest.frames - 1) * this.weather.spatial.manifest.intervalSeconds;
+            if (this.storm.elapsed >= horizon && !this.resetRequested) {
+                this.paused = true;
+                this.storm.phase = 'End of available weather';
+                return;
+            }
+            this.weather.writeSpatialTime(this.resetRequested ? 0 : this.storm.elapsed);
+            this.confinement = 0;
+            this.storm.followStorm = false;
         }
         if (this.resetRequested) {
             this.dust.reset(encoder);
@@ -306,6 +317,9 @@ export class FluidSolver {
     }
 
     addThermal() {
+        if (constants.spatialWeather) {
+            return;
+        }
         this.thermalRequested = true;
     }
 
@@ -317,9 +331,23 @@ export class FluidSolver {
         this.steps = 0;
         this.storm.elapsed = 0;
         this.storm.resetTracking();
-        if (this.weather.scenario !== 'elreno') {
+        if (this.weather.scenario !== 'elreno' && this.weather.scenario !== 'hrrr') {
             this.storm.enabled = false;
         }
+    }
+
+    startSpatialExperiment() {
+        this.reset();
+        this.storm.enabled = true;
+        this.storm.weatherDriven = true;
+        this.storm.liftSpeed = 0;
+        this.storm.liftDuration = 0;
+        this.storm.balanceReference = false;
+        this.storm.followStorm = false;
+        this.dt = 1;
+        this.multigridCycles = 4;
+        this.confinement = 0;
+        this.dust.enabled = false;
     }
 
     startElRenoExperiment() {

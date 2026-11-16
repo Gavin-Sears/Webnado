@@ -1,5 +1,6 @@
 const freeSlipGround = ${freeSlipGround} != 0;
 const anelasticAir = ${anelasticAir} != 0;
+const spatialWeather = ${spatialWeather} != 0;
 
 struct SolverParameters {
     dt: f32,
@@ -144,12 +145,108 @@ fn airFaceDensity(cell: vec3i, axis: i32) -> f32 {
     return background(height).air.z;
 }
 
+struct SpatialState {
+    wind: vec4f, // east, up, south, terrain elevation
+    thermo: vec4f,
+    air: vec4f,
+}
+
+fn spatialCoordinate(position: vec3f) -> vec3f {
+    let map = atmosphere[${atmosphereSlices}u + 1u];
+    let grid = atmosphere[${atmosphereSlices}u];
+    let world = domainMin + position * cellSize;
+    let latitude = map.air.x;
+    let longitude = map.air.y;
+    let radial = map.state.w * cos(latitude) + world.z * sin(latitude);
+    let x = radial * cos(longitude) - world.x * sin(longitude);
+    let y = radial * sin(longitude) + world.x * cos(longitude);
+    let z = map.state.w * sin(latitude) - world.z * cos(latitude);
+    let lat = atan2(z, length(vec2f(x, y)));
+    let lon = atan2(y, x);
+    let rho = map.state.w * map.state.y / pow(tan(0.7853981634 + 0.5 * lat), map.state.x);
+    let angle = map.state.x * (lon - map.air.w);
+    let projected = vec2f(rho * sin(angle), map.state.z - rho * cos(angle));
+    let horizontal = (projected - grid.air.xy) / grid.air.zw;
+    return vec3f(horizontal.x, world.y + map.air.z, horizontal.y);
+}
+
+fn spatialIndex(cell: vec3u, frame: u32) -> u32 {
+    let dims = vec3u(atmosphere[${atmosphereSlices}u].state.xyz);
+    return ${atmosphereSlices}u + 3u + 2u * (((frame * dims.z + cell.y) * dims.y + cell.z) * dims.x + cell.x);
+}
+
+fn spatialColumn(cell: vec2u, height: f32, frame: u32) -> SpatialState {
+    let levels = u32(atmosphere[${atmosphereSlices}u].state.z);
+    var lower = 0u;
+    var upper = levels - 1u;
+    for (var iteration = 0; iteration < 8 && upper - lower > 1u; iteration++) {
+        let middle = (lower + upper) / 2u;
+        if (atmosphere[spatialIndex(vec3u(cell.x, middle, cell.y), frame)].state.x < height) {
+            lower = middle;
+        } else {
+            upper = middle;
+        }
+    }
+    let a = spatialIndex(vec3u(cell.x, lower, cell.y), frame);
+    let b = spatialIndex(vec3u(cell.x, upper, cell.y), frame);
+    let fraction = clamp((height - atmosphere[a].state.x)
+        / (atmosphere[b].state.x - atmosphere[a].state.x), 0.0, 1.0);
+    let first = mix(atmosphere[a].state, atmosphere[b].state, fraction);
+    let second = mix(atmosphere[a].air, atmosphere[b].air, fraction);
+    return SpatialState(vec4f(first.w, second.y, second.x, atmosphere[a + 1u].air.x),
+        vec4f(first.yz, second.zw), mix(atmosphere[a + 1u].state, atmosphere[b + 1u].state, fraction));
+}
+
+fn spatialFrame(position: vec3f, frame: u32) -> SpatialState {
+    let coordinate = spatialCoordinate(position);
+    let dims = atmosphere[${atmosphereSlices}u].state.xy;
+    let horizontal = clamp(coordinate.xz, vec2f(0), dims - vec2f(1));
+    let base = min(vec2u(floor(horizontal)), vec2u(dims) - vec2u(2));
+    let fraction = horizontal - vec2f(base);
+    var result = SpatialState(vec4f(0), vec4f(0), vec4f(0));
+    for (var z = 0u; z < 2u; z++) {
+        for (var x = 0u; x < 2u; x++) {
+            let amount = mix(vec2f(1) - fraction, fraction, vec2f(f32(x), f32(z)));
+            let weight = amount.x * amount.y;
+            let point = spatialColumn(base + vec2u(x, z), coordinate.y, frame);
+            result.wind += weight * point.wind;
+            result.thermo += weight * point.thermo;
+            result.air += weight * point.air;
+        }
+    }
+    return result;
+}
+
+fn spatialState(position: vec3f) -> SpatialState {
+    let count = atmosphere[${atmosphereSlices}u].state.w;
+    let timing = atmosphere[${atmosphereSlices}u + 2u].state;
+    let time = clamp(timing.x / timing.y, 0.0, count - 1.0);
+    let lower = u32(floor(time));
+    let a = spatialFrame(position, lower);
+    let b = spatialFrame(position, min(lower + 1u, u32(count) - 1u));
+    var wind = mix(a.wind, b.wind, fract(time));
+    // Project the imported lateral flux onto the closed-top domain's mass constraint.
+    let corrections = atmosphere[${atmosphereSlices}u + 2u].air;
+    let correction = mix(corrections[lower], corrections[min(lower + 1u, u32(count) - 1u)], fract(time));
+    if (position.x <= 0.0) { wind.x += correction; }
+    if (position.x >= f32(gridDims.x)) { wind.x -= correction; }
+    if (position.z <= 0.0) { wind.z += correction; }
+    if (position.z >= f32(gridDims.z)) { wind.z -= correction; }
+    return SpatialState(wind,
+        mix(a.thermo, b.thermo, fract(time)), mix(a.air, b.air, fract(time)));
+}
+
 fn fieldFaceVelocity(field: texture_3d<f32>, cell: vec3i, axis: i32) -> f32 {
     if (!faceOpen(cell, axis)) {
         return 0.0;
     }
 
     if (!dustPhase && axis != 1 && (cell[axis] == 0 || cell[axis] == gridDims[axis])) {
+        if (spatialWeather) {
+            var offset = vec3f(0.5);
+            offset[axis] = 0.0;
+            return spatialState(vec3f(cell) + offset).wind[axis];
+        }
         let wind = quantizeToF16(background(f32(cell.y) + 0.5).state.zw);
         return select(wind.x, wind.y, axis == 2);
     }
