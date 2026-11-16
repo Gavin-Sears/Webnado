@@ -193,6 +193,7 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         const debug = folder.addFolder('Debug');
         debug.add({ focus: () => this.focusRotation() }, 'focus').name('Look at near-ground rotation');
+        debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Look at rotation under cloud');
         const view = debug.add(this, 'debugView', Object.keys(DEBUG_VIEWS)).name('view');
         const boost = debug.add(this, 'debugBoost').name('boost faint cloud');
         const scale = debug.add(this, 'debugScale', 0, 1);
@@ -212,8 +213,9 @@ export class VolumetricRenderer extends renderer.Renderer {
         showScale();
     }
 
-    private focusRotation() {
-        const target = this.stage.solver.storm.rotationLocation;
+    private focusRotation(underCloud = false) {
+        const storm = this.stage.solver.storm;
+        const target = underCloud ? storm.cloudRotationLocation : storm.rotationLocation;
         if (!target) return;
         const camera = this.stage.camera;
         camera.threeCamera.position.set(target[0], 1100, target[2] + 4000);

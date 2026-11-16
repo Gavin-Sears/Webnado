@@ -293,7 +293,7 @@ fn debugMarch(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32) -> vec4f {
                 let rotation = horizontalRotationAt(uvw);
                 let amount = select(abs(rotation.x), rotation.y, params.debugView == 10u) / params.debugScale;
                 sampleColor = select(vec3f(0.2, 0.4, 1.0), heat(amount), rotation.x >= 0.0);
-                opacity = 0.05 * clamp(amount, 0.0, 1.0);
+                opacity = 0.1 * pow(clamp(amount, 0.0, 1.0), 3.0);
             }
             // bricks the raymarcher won't skip, in checkerboard pattern
             default: {

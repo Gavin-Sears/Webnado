@@ -25,7 +25,7 @@ async function run() {
             let world = domainMin + (vec3f(id) + vec3f(0.5)) * cellSize;
             var velocity = vec3f(0.04 * world.z, 0, 0);
             if (rotation) {
-                velocity = vec3f(10.0 + 0.02 * world.z, 0, -5.0 - 0.02 * world.x);
+                velocity = vec3f(10.0 + 0.02 * world.z, 4, -5.0 - 0.02 * world.x);
             }
             textureStore(velocityOut, vec3i(id), vec4f(velocity, 0));
         }
@@ -54,6 +54,16 @@ async function run() {
         const rotating = await measure(true);
         expect(Math.abs(rotating.groundSwirlingStrength - 0.02) < 0.002,
             'Translated solid-body rotation retains its known swirling strength');
+        expect(rotating.cloudOverheadSwirl === 0,
+            'A dry vortex is not reported as rotation beneath rising cloud');
+        const cloud = new Uint16Array(constants.gridX * constants.gridY * constants.gridZ * 4);
+        for (let index = 2; index < cloud.length; index += 4) cloud[index] = 0x3c00;
+        device.queue.writeTexture({ texture: fields.thermo.textures[fields.thermo.index] }, cloud,
+            { bytesPerRow: constants.gridX * 8, rowsPerImage: constants.gridY },
+            [constants.gridX, constants.gridY, constants.gridZ]);
+        const cloudy = await measure(true);
+        expect(Math.abs(cloudy.cloudOverheadSwirl - 0.02) < 0.002,
+            'The under-cloud diagnostic retains the known swirl beneath a rising cloud');
         const error = await device.popErrorScope();
         expect(error === null, error?.message ?? 'No WebGPU validation errors');
         output.textContent += '\nAll checks passed.';

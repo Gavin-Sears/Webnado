@@ -24,6 +24,8 @@ export interface StormReport {
     groundLocation: number[];
     groundSwirlingStrength: number;
     swirlLocation: number[];
+    cloudOverheadSwirl: number;
+    cloudOverheadLocation: number[];
     massWeighted: boolean;
 }
 
@@ -31,7 +33,7 @@ export class StormDiagnostics {
     constructor(private readonly atmosphere: GPUBuffer) {}
 
     private readonly groups = Math.ceil(constants.gridX * constants.gridY * constants.gridZ / 128);
-    private readonly size = this.groups * 112;
+    private readonly size = this.groups * 128;
     private readonly output = device.createBuffer({
         size: this.size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
     });
@@ -76,8 +78,10 @@ export class StormDiagnostics {
         let groundLocation = [0, 0, 0];
         let groundSwirlingStrength = 0;
         let swirlLocation = [0, 0, 0];
+        let cloudOverheadSwirl = 0;
+        let cloudOverheadLocation = [0, 0, 0];
         for (let group = 0; group < this.groups; group++) {
-            const offset = group * 28;
+            const offset = group * 32;
             for (let channel = 0; channel < 8; channel++) {
                 maxima[channel] = Math.max(maxima[channel], data[offset + channel]);
             }
@@ -101,6 +105,10 @@ export class StormDiagnostics {
                 groundSwirlingStrength = data[offset + 27];
                 swirlLocation = Array.from(data.subarray(offset + 24, offset + 27));
             }
+            if (data[offset + 31] > cloudOverheadSwirl) {
+                cloudOverheadSwirl = data[offset + 31];
+                cloudOverheadLocation = Array.from(data.subarray(offset + 28, offset + 31));
+            }
         }
         this.readback.unmap();
         const [updraft, speed, verticalVorticity, surfaceVorticity, cloud, rain, temperature, invalid] = maxima;
@@ -110,6 +118,7 @@ export class StormDiagnostics {
             divergenceMax, surfaceLocation, updraftLocation, rotatingUpdraftScore,
             groundVorticity, groundLocation,
             groundSwirlingStrength, swirlLocation,
+            cloudOverheadSwirl, cloudOverheadLocation,
             massWeighted: Boolean(constants.anelasticAir),
             lowestSampleHeight: (constants.freeSlipGround ? 0.5 : 1.5) * constants.domainY / constants.gridY
         };

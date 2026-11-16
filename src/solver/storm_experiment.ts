@@ -24,6 +24,8 @@ export class StormExperiment {
     surfaceVorticity = 0;
     groundSwirl = 0;
     rotationLocation: number[] | undefined;
+    cloudOverheadSwirl = 0;
+    cloudRotationLocation: number[] | undefined;
     divergence = 0;
 
     private diagnostics: StormDiagnostics | undefined;
@@ -54,6 +56,7 @@ export class StormExperiment {
         folder.add(this, 'updraft').name('Peak updraft (m/s)').listen().disable();
         folder.add(this, 'surfaceVorticity').name('Core rotation below 1 km (1/s)').listen().disable();
         folder.add(this, 'groundSwirl').name('Ground swirling strength (1/s)').listen().disable();
+        folder.add(this, 'cloudOverheadSwirl').name('Ground swirl under rising cloud (1/s)').listen().disable();
         folder.add(this, 'divergence').name('Constraint error RMS (1/s)').listen().disable();
         folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
         folder.add(this, 'liftSpeed', 1, 20, 1).name('Initial updraft (m/s)');
@@ -87,6 +90,8 @@ export class StormExperiment {
             this.surfaceVorticity = report.surfaceVorticity;
             this.groundSwirl = report.groundSwirlingStrength;
             this.rotationLocation = report.groundSwirlingStrength > 0.005 ? report.swirlLocation : undefined;
+            this.cloudOverheadSwirl = report.cloudOverheadSwirl;
+            this.cloudRotationLocation = report.cloudOverheadSwirl > 0.005 ? report.cloudOverheadLocation : undefined;
             this.divergence = report.divergenceRms;
             this.track(report);
         }).catch(error => console.error('Storm diagnostics failed', error)).finally(() => {
@@ -108,6 +113,8 @@ export class StormExperiment {
     resetTracking() {
         this.groundSwirl = 0;
         this.rotationLocation = undefined;
+        this.cloudOverheadSwirl = 0;
+        this.cloudRotationLocation = undefined;
         this.shiftX = 0;
         this.shiftZ = 0;
         this.windowEast = 0;
