@@ -2,6 +2,7 @@ import { device } from '../renderer';
 import { constants, processShaderRaw } from '../shaders/shaders';
 import type { Fields } from '../stage/fields';
 import source from './storm_diagnostics.wgsl?raw';
+import { VortexProfile } from './vortex_profile';
 
 export interface StormReport {
     seconds: number;
@@ -27,10 +28,13 @@ export interface StormReport {
     cloudOverheadSwirl: number;
     cloudOverheadLocation: number[];
     massWeighted: boolean;
+    rotatingWind: number;
+    rotatingWindRadius: number;
 }
 
 export class StormDiagnostics {
     constructor(private readonly atmosphere: GPUBuffer) {}
+    private readonly profile = new VortexProfile();
 
     private readonly groups = Math.ceil(constants.gridX * constants.gridY * constants.gridZ / 128);
     private readonly size = this.groups * 128;
@@ -111,6 +115,10 @@ export class StormDiagnostics {
             }
         }
         this.readback.unmap();
+        const core = cloudOverheadSwirl > 0 ? cloudOverheadLocation : swirlLocation;
+        const rings = groundSwirlingStrength > 0 ? await this.profile.measure(fields, core) : [];
+        const strongest = rings.reduce((best, ring) => Math.abs(ring.tangential) > Math.abs(best.tangential) ? ring : best,
+            { tangential: 0, radius: 0 });
         const [updraft, speed, verticalVorticity, surfaceVorticity, cloud, rain, temperature, invalid] = maxima;
         return {
             seconds, updraft, speed, verticalVorticity, surfaceVorticity, cloud, rain, temperature, invalid,
@@ -120,6 +128,8 @@ export class StormDiagnostics {
             groundSwirlingStrength, swirlLocation,
             cloudOverheadSwirl, cloudOverheadLocation,
             massWeighted: Boolean(constants.anelasticAir),
+            rotatingWind: Math.abs(strongest.tangential),
+            rotatingWindRadius: strongest.radius,
             lowestSampleHeight: (constants.freeSlipGround ? 0.5 : 1.5) * constants.domainY / constants.gridY
         };
     }
@@ -127,5 +137,6 @@ export class StormDiagnostics {
     destroy() {
         this.output.destroy();
         this.readback.destroy();
+        this.profile.destroy();
     }
 }
