@@ -12,7 +12,7 @@ fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
             return 0.0;
         }
 
-        let wind = background(position.y).state.zw;
+        let wind = quantizeToF16(background(position.y).state.zw);
         return select(wind.x, wind.y, axis == 2);
     }
 
@@ -26,19 +26,21 @@ fn sampleComponent(rawPosition: vec3f, axis: i32) -> f32 {
     }
     let base = vec3i(floor(coordinate));
     let fraction = fract(coordinate);
-    var result = 0.0;
+    let reference = faceVelocity(phaseCell(base), axis);
+    var correction = 0.0;
 
     for (var z = 0; z < 2; z++) {
         for (var y = 0; y < 2; y++) {
             for (var x = 0; x < 2; x++) {
                 let corner = vec3i(x, y, z);
                 let weight = mix(vec3f(1) - fraction, fraction, vec3f(corner));
-                result += faceVelocity(phaseCell(base + corner), axis) * weight.x * weight.y * weight.z;
+                correction += (faceVelocity(phaseCell(base + corner), axis) - reference)
+                    * weight.x * weight.y * weight.z;
             }
         }
     }
 
-    return result;
+    return reference + correction;
 }
 
 fn sampleVelocity(position: vec3f) -> vec3f {

@@ -1,3 +1,24 @@
+@compute @workgroup_size(8, 8, 4)
+fn buildVelocityGradients(@builtin(global_invocation_id) id: vec3u) {
+    let cell = vec3i(id);
+    if (!inside(cell)) {
+        return;
+    }
+    textureStore(velocityOut, cell, vec4f(velocityDerivative(cell, 0), 0));
+    textureStore(vorticityOut, cell, vec4f(velocityDerivative(cell, 1), 0));
+    textureStore(airGradientZOut, cell, vec4f(velocityDerivative(cell, 2), 0));
+}
+
+fn cachedDerivative(cell: vec3i, axis: i32) -> vec3f {
+    if (axis == 0) {
+        return textureLoad(airGradientX, cell, 0).xyz;
+    }
+    if (axis == 1) {
+        return textureLoad(airGradientY, cell, 0).xyz;
+    }
+    return textureLoad(airGradientZ, cell, 0).xyz;
+}
+
 fn sampleDynamic(field: texture_3d<f32>, position: vec3f) -> vec4f {
     let coordinate = clamp(position - vec3f(0.5), vec3f(0), vec3f(gridDims - 1));
     let base = vec3i(floor(coordinate));
@@ -67,9 +88,9 @@ fn energy(@builtin(global_invocation_id) id: vec3u) {
         let previous = sampleDynamic(turbulenceIn, traceBack(position)).x;
         let viscosity = eddyViscosity(previous);
         let mixing = 3.0 * parameters.mixing * viscosity;
-        let dx = velocityDerivative(cell, 0);
-        let dy = velocityDerivative(cell, 1);
-        let dz = velocityDerivative(cell, 2);
+        let dx = cachedDerivative(cell, 0);
+        let dy = cachedDerivative(cell, 1);
+        let dz = cachedDerivative(cell, 2);
         let shear = vec3f(dx.y + dy.x, dx.z + dz.x, dy.z + dz.y);
         let strain = 2.0 * (dx.x * dx.x + dy.y * dy.y + dz.z * dz.z) + dot(shear, shear);
         let theta = background(position.y).state.x;
@@ -98,8 +119,14 @@ fn energy(@builtin(global_invocation_id) id: vec3u) {
     textureStore(turbulenceOut, cell, result);
 }
 
-fn stress(cell: vec3i, axis: i32) -> vec3f {
-    let neighbor = cell + axisOffset(axis);
+fn stress(rawCell: vec3i, axis: i32) -> vec3f {
+    var cell = rawCell;
+    var neighbor = cell + axisOffset(axis);
+    if (storm.timing.x > 0.0 && axis != 1) {
+        // Continue the shear stress through open sides instead of creating an artificial edge force.
+        cell = clamp(cell, vec3i(0), gridDims - 1);
+        neighbor = clamp(neighbor, vec3i(0), gridDims - 1);
+    }
     if (!fluid(cell) || !fluid(neighbor)) {
         return vec3f(0);
     }
@@ -109,8 +136,8 @@ fn stress(cell: vec3i, axis: i32) -> vec3f {
     let derivative = (centerVelocity(neighbor) - centerVelocity(cell)) / cellSize[axis];
     var transpose = vec3f(0);
     for (var component = 0; component < 3; component++) {
-        transpose[component] = 0.5 * (velocityDerivative(cell, component)[axis]
-            + velocityDerivative(neighbor, component)[axis]);
+        transpose[component] = 0.5 * (cachedDerivative(cell, component)[axis]
+            + cachedDerivative(neighbor, component)[axis]);
     }
     return viscosity * (derivative + transpose);
 }
@@ -137,7 +164,8 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
             let velocity = centerVelocity(cell);
             let air = background(f32(cell.y) + 0.5);
             let damping = smoothstep(storm.damping.x, domainSize.y, world.y) * storm.damping.y;
-            force -= damping * (velocity - vec3f(air.state.z, 0, air.state.w));
+            let ambient = quantizeToF16(vec3f(air.state.z, 0, air.state.w));
+            force -= damping * (velocity - ambient);
 
             // Temporary lifting initiates convection without prescribing circulation.
             let radius = vec3f(storm.region.x, storm.region.y, storm.region.x);

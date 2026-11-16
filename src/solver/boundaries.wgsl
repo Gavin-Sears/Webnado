@@ -33,7 +33,7 @@ fn buildOpenBits(@builtin(global_invocation_id) id: vec3u) {
             }
 
             // Close ground-adjacent tangential faces so projection preserves no-slip.
-            if (axis != 1 && (touchesGround(cell)
+            if (!freeSlipGround && axis != 1 && (touchesGround(cell)
                 || (inside(neighbor) && touchesGround(neighbor)))) {
                 open = false;
             }

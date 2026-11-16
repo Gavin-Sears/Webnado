@@ -28,7 +28,8 @@ export const domains = {
     local: [3200, 1600, 3200],
     supercell: [64000, 18000, 64000]
 } as const;
-const requestedDomain = new URLSearchParams(window.location.search).get('domain') ?? 'storm';
+const requestedDomain = new URLSearchParams(window.location.search).get('domain')
+    ?? (new URLSearchParams(window.location.search).get('case') === 'elreno' ? 'supercell' : 'storm');
 export const domainName = Object.hasOwn(domains, requestedDomain) ? requestedDomain as keyof typeof domains : 'storm';
 const [domainX, domainY, domainZ] = domains[domainName];
 
@@ -43,7 +44,8 @@ export const constants = {
     domainY,
     domainZ,
 
-    atmosphereSlices: 64,
+    atmosphereSlices: domainName === 'supercell' ? 256 : 64,
+    freeSlipGround: Number(domainName === 'supercell'),
 
     brickSize: 8    // cells per side of a brick, for skipping empty space
 };

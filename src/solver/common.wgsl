@@ -54,6 +54,10 @@ struct StormParameters {
     damping: vec4f, // damping height, inverse timescale, unused
 }
 @group(0) @binding(29) var<uniform> storm: StormParameters;
+@group(0) @binding(30) var airGradientZOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(31) var airGradientX: texture_3d<f32>;
+@group(0) @binding(32) var airGradientY: texture_3d<f32>;
+@group(0) @binding(33) var airGradientZ: texture_3d<f32>;
 
 const fluidBit = 64u;
 
@@ -135,7 +139,7 @@ fn faceVelocity(cell: vec3i, axis: i32) -> f32 {
     }
 
     if (!dustPhase && axis != 1 && (cell[axis] == 0 || cell[axis] == gridDims[axis])) {
-        let wind = background(f32(cell.y) + 0.5).state.zw;
+        let wind = quantizeToF16(background(f32(cell.y) + 0.5).state.zw);
         return select(wind.x, wind.y, axis == 2);
     }
 
@@ -143,7 +147,11 @@ fn faceVelocity(cell: vec3i, axis: i32) -> f32 {
 }
 
 fn centerVelocity(cell: vec3i) -> vec3f {
-    let nearest = clamp(cell, vec3i(0), gridDims - 1);
+    var nearest = clamp(cell, vec3i(0), gridDims - 1);
+    let reflected = freeSlipGround && cell.y < 1;
+    if (reflected) {
+        nearest.y = 1;
+    }
     var velocity = vec3f(0);
 
     for (var axis = 0; axis < 3; axis++) {
@@ -151,5 +159,8 @@ fn centerVelocity(cell: vec3i) -> vec3f {
             + faceVelocity(nearest + axisOffset(axis), axis));
     }
 
+    if (reflected) {
+        velocity.y = -velocity.y;
+    }
     return velocity;
 }

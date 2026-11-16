@@ -24,6 +24,7 @@ async function start() {
     gui.add({ domain: domainName }, 'domain', Object.keys(domains)).onChange((domain: string) => {
         const url = new URL(window.location.href);
         url.searchParams.set('domain', domain);
+        url.searchParams.delete('case');
         window.location.href = url.href;
     });
 

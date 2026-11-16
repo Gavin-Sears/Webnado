@@ -31,13 +31,14 @@ async function run() {
     solver.mixing = Number(query.get('mixing') ?? 0.1);
     solver.turbulence = query.get('turbulence') !== 'off';
     const steps = Number(query.get('steps') ?? 3600);
+    const reportEvery = Number(query.get('reportEvery') ?? 100);
 
     try {
         for (let step = 1; step <= steps; step++) {
             const encoder = device.createCommandEncoder();
             solver.step(encoder);
             device.queue.submit([encoder.finish()]);
-            if (step % 100 === 0 || step === steps) {
+            if (step % reportEvery === 0 || step === steps) {
                 const report = await diagnostics.measure(fields, solver.storm.elapsed);
                 reports.push(report);
                 output.textContent = JSON.stringify(reports, null, 2);

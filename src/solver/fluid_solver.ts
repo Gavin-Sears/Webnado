@@ -27,8 +27,9 @@ const kernelBindings = {
     enforceBoundaries: [1, 3, 4, 5],
     curl: [1, 3, 4, 8],
     forces: [0, 1, 3, 4, 5, 7, 16, 18],
-    energy: [0, 1, 2, 3, 4, 14, 15],
-    atmosphericForces: [0, 1, 2, 3, 4, 14, 17, 29],
+    buildVelocityGradients: [1, 3, 4, 5, 8, 30],
+    energy: [0, 1, 2, 3, 4, 14, 15, 31, 32, 33],
+    atmosphericForces: [0, 1, 2, 3, 4, 14, 17, 29, 31, 32, 33],
     evolveVorticity: [0, 1, 3, 4, 7, 8, 14, 16, 18],
     mixThermo: [0, 2, 3, 6, 14],
     resetFields: [4, 5, 6, 8, 15],
@@ -207,6 +208,8 @@ export class FluidSolver {
 
         this.prepareBoundaries(encoder);
         this.dust.predict(encoder);
+        // Velocity.write and both vorticity buffers are scratch until the force/curl passes replace them.
+        this.dispatch(encoder, 'buildVelocityGradients');
         this.dispatch(encoder, 'energy');
         this.fields.turbulence.swap();
         this.dispatch(encoder, 'atmosphericForces');
@@ -263,6 +266,7 @@ export class FluidSolver {
     }
 
     startShearExperiment() {
+        this.storm.enabled = false;
         const values = new Float32Array(constants.atmosphereSlices * 8);
         for (let slice = 0; slice < constants.atmosphereSlices; slice++) {
             const height = (slice + 0.5) / constants.atmosphereSlices * constants.domainY;
@@ -362,7 +366,7 @@ export class FluidSolver {
             entry.buffer = { type: 'uniform' };
         } else if (binding === 4) {
             entry.buffer = { type: 'read-only-storage' };
-        } else if ([5, 6, 8, 11, 13, 15, 17, 19].includes(binding)) {
+        } else if ([5, 6, 8, 11, 13, 15, 17, 19, 30].includes(binding)) {
             let format: GPUTextureFormat = 'rgba16float';
 
             if (binding === 11) {
@@ -418,7 +422,11 @@ export class FluidSolver {
             17: this.atmosphericForceView,
             18: this.fields.windForcingView,
             19: this.fields.windForcingView,
-            29: { buffer: this.storm.buffer }
+            29: { buffer: this.storm.buffer },
+            30: this.fields.vorticity.read,
+            31: this.fields.velocity.write,
+            32: this.fields.vorticity.write,
+            33: this.fields.vorticity.read
         };
 
         const entries = kernelBindings[name].map(binding => ({

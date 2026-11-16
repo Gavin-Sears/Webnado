@@ -5,6 +5,7 @@ const gridDims = vec3i(${gridX}, ${gridY}, ${gridZ});
 const domainSize = vec3f(${domainX}, ${domainY}, ${domainZ});
 const domainMin = vec3f(-0.5 * domainSize.x, 0.0, -0.5 * domainSize.z);
 const cellSize = domainSize / vec3f(gridDims);
+const freeSlipGround = ${freeSlipGround} != 0;
 
 // Shared fields (see src/stage/fields.ts):
 //   velocity: u, v, w (m/s), free channel. Staggered: texel (i, j, k) holds u at x = i, v at y = j, w at z = k.

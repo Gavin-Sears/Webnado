@@ -3,6 +3,11 @@
     "source": "https://github.com/abkenyon/HutsonWeiss2022/blob/main/ruc_pert_soundings/ruc_control",
     "study": "https://doi.org/10.1175/MWR-D-22-0288.1",
     "retrieved": "2026-11-15",
+    "simulation_frame": {
+        "eastward_translation_m_per_s": 16.49,
+        "northward_translation_m_per_s": 16.52,
+        "method": "Bunkers right-moving storm estimate, independently calculated with MetPy from the hydrostatic control profile. The experimental flat ground uses free-slip conditions."
+    },
     "description": "Original control environment supplied by the study authors. It defines a horizontally homogeneous environment, not a three-dimensional reconstruction or a guaranteed tornado forecast.",
     "header": ["surface pressure (hPa)", "potential temperature (K)", "water vapor (g/kg)"],
     "columns": ["height (m)", "potential temperature (K)", "water vapor (g/kg)", "eastward wind (m/s)", "northward wind (m/s)"]

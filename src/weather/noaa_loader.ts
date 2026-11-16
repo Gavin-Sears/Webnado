@@ -156,9 +156,14 @@ export class WeatherData {
     }
 
     useElReno() {
+        const column = cm1Atmosphere(elRenoSounding, constants.atmosphereSlices, constants.domainY);
+        for (let offset = 0; offset < column.length; offset += VALUES_PER_SLICE) {
+            column[offset + 2] -= 16.49;
+            column[offset + 3] += 16.52;
+        }
         this.applyColumn(
-            cm1Atmosphere(elRenoSounding, constants.atmosphereSlices, constants.domainY),
-            'El Reno 24 May 2011 · published RUC environment',
+            column,
+            'El Reno 24 May 2011 · storm-relative RUC environment',
             'elreno'
         );
     }
