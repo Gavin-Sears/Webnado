@@ -5,7 +5,7 @@ fn shiftStormWindow(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
     let source = cell + vec3i(i32(storm.region.z), 0, i32(storm.region.w));
-    let wind = background(f32(cell.y) + 0.5).state.zw;
+    let wind = quantizeToF16(background(f32(cell.y) + 0.5).state.zw);
     var velocity = vec4f(wind.x, 0, wind.y, 0);
     var thermo = vec4f(0);
     var energyValue = vec4f(0);
@@ -151,7 +151,8 @@ fn referenceDerivative(cell: vec3i, axis: i32) -> vec3f {
         return vec3f(0);
     }
     let offset = axisOffset(axis);
-    return (referenceVelocity(cell + offset) - referenceVelocity(cell - offset)) / (2.0 * cellSize[axis]);
+    return quantizeToF16((referenceVelocity(cell + offset) - referenceVelocity(cell - offset))
+        / (2.0 * cellSize[axis]));
 }
 
 fn stress(rawCell: vec3i, axis: i32) -> vec3f {
@@ -297,7 +298,7 @@ fn resetFields(@builtin(global_invocation_id) id: vec3u) {
     if (!inside(cell)) {
         return;
     }
-    let wind = background(f32(cell.y) + 0.5).state.zw;
+    let wind = quantizeToF16(background(f32(cell.y) + 0.5).state.zw);
     textureStore(velocityOut, cell, vec4f(wind.x, 0, wind.y, 0));
     textureStore(thermoOut, cell, vec4f(0));
     textureStore(vorticityOut, cell, vec4f(0));

@@ -94,7 +94,8 @@ export class DustFluid {
             cached = {
                 module: device.createShaderModule({
                     label: 'two-fluid dust dynamics',
-                    code: processShaderRaw([commonSource, transportSource, projectionSource, dustSource].join('\n'))
+                    code: processShaderRaw([commonSource.replaceAll('${velocityFormat}', 'rgba16float'),
+                        transportSource, projectionSource, dustSource].join('\n'))
                 }),
                 pipelines: {}
             };

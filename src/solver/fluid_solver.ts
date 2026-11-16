@@ -84,7 +84,7 @@ export class FluidSolver {
     private readonly pressure = new PingPong('pressure', 'r32float');
     private readonly divergence = createVolume('divergence', 'r32float');
     private readonly openBits = createVolume('open neighbor bits', 'r32uint');
-    private readonly atmosphericForce = createVolume('atmospheric forces', 'rgba16float');
+    private readonly atmosphericForce = createVolume('atmospheric forces', constants.velocityFormat);
 
     private readonly divergenceView = this.divergence.createView();
     private readonly openBitsView = this.openBits.createView();
@@ -443,6 +443,8 @@ export class FluidSolver {
                 format = 'r32float';
             } else if (binding === 13) {
                 format = 'r32uint';
+            } else if (binding === 5 || binding === 17) {
+                format = constants.velocityFormat;
             }
 
             entry.storageTexture = {

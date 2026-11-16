@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 
 import { initWebGPU, showFatalError } from './renderer';
 import { VolumetricRenderer } from './renderers/volumetric';
-import { domainName, domains, resolutionName, resolutions } from './shaders/shaders';
+import { constants, domainName, domains, resolutionName, resolutions } from './shaders/shaders';
 
 import { Stage } from './stage/stage';
 
@@ -19,6 +19,12 @@ async function start() {
     gui.add({ resolution: resolutionName }, 'resolution', Object.keys(resolutions)).onChange((resolution: string) => {
         const url = new URL(window.location.href);
         url.searchParams.set('res', resolution);
+        window.location.href = url.href;
+    });
+    const precision = { velocity: constants.velocityFormat === 'rgba32float' ? '32' : '16' };
+    gui.add(precision, 'velocity', { '16 bit': '16', '32 bit': '32' }).name('Velocity precision').onChange((value: string) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('precision', value);
         window.location.href = url.href;
     });
     gui.add({ domain: domainName }, 'domain', Object.keys(domains)).onChange((domain: string) => {

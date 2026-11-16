@@ -12,18 +12,28 @@ export interface DivergenceReport {
 
 export class DivergenceCheck {
     static get bufferSize(): number {
-        const velocityRow = Math.ceil(constants.gridX * 8 / 256) * 256;
+        const texelBytes = constants.velocityFormat === 'rgba32float' ? 16 : 8;
+        const velocityRow = Math.ceil(constants.gridX * texelBytes / 256) * 256;
         const maskRow = Math.ceil(constants.gridX * 4 / 256) * 256;
         const layers = constants.gridY * constants.gridZ;
 
         return (velocityRow + maskRow) * layers + constants.atmosphereSlices * 32;
     }
 
-    private readonly velocityRow = Math.ceil(constants.gridX * 8 / 256) * 256;
+    private get velocityStride() {
+        return !this.periodic && constants.velocityFormat === 'rgba32float' ? 16 : 8;
+    }
+    private get velocityRow() {
+        return Math.ceil(constants.gridX * this.velocityStride / 256) * 256;
+    }
     private readonly maskRow = Math.ceil(constants.gridX * 4 / 256) * 256;
-    private readonly velocityBytes = this.velocityRow * constants.gridY * constants.gridZ;
+    private get velocityBytes() {
+        return this.velocityRow * constants.gridY * constants.gridZ;
+    }
     private readonly maskBytes = this.maskRow * constants.gridY * constants.gridZ;
-    private readonly atmosphereOffset = this.velocityBytes + this.maskBytes;
+    private get atmosphereOffset() {
+        return this.velocityBytes + this.maskBytes;
+    }
 
     private pending: Promise<DivergenceReport> | undefined;
 
@@ -97,6 +107,8 @@ export class DivergenceCheck {
         const { gridX, gridY, gridZ, domainX, domainY, domainZ } = constants;
         const dimensions = [gridX, gridY, gridZ];
         const cellSizes = [domainX / gridX, domainY / gridY, domainZ / gridZ];
+        const readVelocity = (offset: number) => this.velocityStride === 16
+            ? data.getFloat32(offset, true) : halfToFloat(data.getUint16(offset, true));
 
         const bitsAt = (x: number, y: number, z: number) => {
             const offset = this.velocityBytes + this.maskRow * (y + gridY * z) + x * 4;
@@ -143,14 +155,16 @@ export class DivergenceCheck {
                 const open = faceOpen(position, axis, true);
                 if (this.periodic) {
                     position[axis] = 0;
-                    const offset = this.velocityRow * (position[1] + gridY * position[2]) + position[0] * 8 + axis * 2;
-                    return open ? halfToFloat(data.getUint16(offset, true)) : 0;
+                    const offset = this.velocityRow * (position[1] + gridY * position[2])
+                        + position[0] * this.velocityStride + axis * (this.velocityStride / 4);
+                    return open ? readVelocity(offset) : 0;
                 }
                 return open ? windAt(y, axis) : 0;
             }
 
-            const offset = this.velocityRow * (y + gridY * z) + x * 8 + axis * 2;
-            return halfToFloat(data.getUint16(offset, true));
+            const offset = this.velocityRow * (y + gridY * z)
+                + x * this.velocityStride + axis * (this.velocityStride / 4);
+            return readVelocity(offset);
         };
 
         let sumSquares = 0;

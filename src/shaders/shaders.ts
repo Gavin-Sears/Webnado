@@ -50,6 +50,8 @@ export const constants = {
     freeSlipGround: Number(domainName === 'supercell' || domainName === 'storm-focus'),
     anelasticAir: Number(new URLSearchParams(window.location.search).get('case') === 'elreno'
         && new URLSearchParams(window.location.search).get('projection') === 'anelastic'),
+    velocityFormat: new URLSearchParams(window.location.search).get('precision') === '32'
+        ? 'rgba32float' as const : 'rgba16float' as const,
 
     brickSize: 8    // cells per side of a brick, for skipping empty space
 };

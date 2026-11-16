@@ -56,7 +56,7 @@ export class PingPong {
 // CHECKITOUT: the fields shared between teammates, with layouts in common.wgsl.
 // These formats work as storage textures on every device, unlike r8uint or rg16float.
 export class Fields {
-    velocity = new PingPong("velocity", "rgba16float");
+    velocity = new PingPong("velocity", constants.velocityFormat);
     dustVelocity: PingPong;
     dustDensity: PingPong;
     dustStorageVersion = 0;
