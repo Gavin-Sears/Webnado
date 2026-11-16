@@ -22,6 +22,8 @@ export class StormExperiment {
     phase = 'Off';
     updraft = 0;
     surfaceVorticity = 0;
+    groundSwirl = 0;
+    rotationLocation: number[] | undefined;
     divergence = 0;
 
     private diagnostics: StormDiagnostics | undefined;
@@ -38,10 +40,20 @@ export class StormExperiment {
         const folder = gui.addFolder('Atmospheric storm');
         folder.add({ start: () => start('supercell') }, 'start').name('El Reno: full storm domain');
         folder.add({ start: () => start('storm-focus') }, 'start').name('El Reno: cropped storm window');
+        if (this.enabled) {
+            const choices = { 'Constant volume': 'volume', 'Stratified mass': 'anelastic' };
+            const settings = { constraint: constants.anelasticAir ? 'anelastic' : 'volume' };
+            folder.add(settings, 'constraint', choices).name('Air conservation').onChange((constraint: string) => {
+                const url = new URL(location.href);
+                url.searchParams.set('projection', constraint);
+                location.href = url.href;
+            });
+        }
         folder.add(this, 'elapsed').name('Simulated seconds').listen().disable();
         folder.add(this, 'phase').name('Phase').listen().disable();
         folder.add(this, 'updraft').name('Peak updraft (m/s)').listen().disable();
         folder.add(this, 'surfaceVorticity').name('Core rotation below 1 km (1/s)').listen().disable();
+        folder.add(this, 'groundSwirl').name('Ground swirling strength (1/s)').listen().disable();
         folder.add(this, 'divergence').name('Constraint error RMS (1/s)').listen().disable();
         folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
         folder.add(this, 'liftSpeed', 1, 20, 1).name('Initial updraft (m/s)');
@@ -73,6 +85,8 @@ export class StormExperiment {
         void this.diagnostics.measure(fields, this.elapsed).then(report => {
             this.updraft = report.updraft;
             this.surfaceVorticity = report.surfaceVorticity;
+            this.groundSwirl = report.groundSwirlingStrength;
+            this.rotationLocation = report.groundSwirlingStrength > 0.005 ? report.swirlLocation : undefined;
             this.divergence = report.divergenceRms;
             this.track(report);
         }).catch(error => console.error('Storm diagnostics failed', error)).finally(() => {
@@ -92,6 +106,8 @@ export class StormExperiment {
     }
 
     resetTracking() {
+        this.groundSwirl = 0;
+        this.rotationLocation = undefined;
         this.shiftX = 0;
         this.shiftZ = 0;
         this.windowEast = 0;

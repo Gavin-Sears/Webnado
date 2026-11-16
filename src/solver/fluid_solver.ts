@@ -157,7 +157,7 @@ export class FluidSolver {
 
     buildGui(gui: GUI) {
         const folder = gui.addFolder('Fluid solver');
-        folder.add(this, 'dt', 0.05, 1, 0.05).name('Time step (s)');
+        folder.add(this, 'dt', 0.05, this.storm.enabled ? 2 : 1, 0.05).name('Time step (s)');
         folder.add(this, 'paused').name('Pause simulation');
         const jacobi = folder.add(this, 'jacobiIterations', 1, 200, 1).name('Jacobi iterations').hide();
         const multigrid = folder.add(this, 'multigridCycles', 1, 8, 1).name('Multigrid cycles');
@@ -180,7 +180,7 @@ export class FluidSolver {
             url.searchParams.set('frame', domain === 'storm-focus' ? 'bunkers' : 'reference');
             url.searchParams.delete('follow');
             if (domain === 'storm-focus') {
-                url.searchParams.set('res', 'balanced');
+                url.searchParams.set('res', 'high');
             }
             url.searchParams.set('case', 'elreno');
             url.searchParams.set('lift', String(this.storm.liftSpeed));
@@ -323,6 +323,8 @@ export class FluidSolver {
         this.weather.useElReno();
         this.reset();
         this.storm.enabled = true;
+        this.dt = 2;
+        this.multigridCycles = 4;
         this.dust.enabled = false;
         this.confinement = 0;
         this.storm.radius = Math.min(10000, 0.3 * constants.domainX);

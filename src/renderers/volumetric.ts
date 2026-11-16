@@ -45,7 +45,7 @@ function platformQuality(): string {
 // The numbers match the cases in debugMarch() (raymarch.fs.wgsl)
 const DEBUG_VIEWS: Record<string, number> = {
     off: 0, density: 1, temperature: 2, velocity: 3, vorticity: 4, obstacles: 5, bricks: 6,
-    'dust density': 7, 'dust velocity': 8
+    'dust density': 7, 'dust velocity': 8, 'vertical rotation': 9, 'swirling strength': 10
 };
 
 // Starting scale and max value for debug views
@@ -56,7 +56,9 @@ const DEBUG_SCALES: Record<string, { value: number, max: number, unit: string }>
     velocity: { value: 5, max: 50, unit: 'm/s' },
     vorticity: { value: 0.1, max: 1, unit: '1/s' },
     'dust density': { value: 0.02, max: 0.2, unit: 'kg/m3' },
-    'dust velocity': { value: 5, max: 50, unit: 'm/s' }
+    'dust velocity': { value: 5, max: 50, unit: 'm/s' },
+    'vertical rotation': { value: 0.05, max: 0.5, unit: '1/s' },
+    'swirling strength': { value: 0.03, max: 0.2, unit: '1/s' }
 };
 
 const VOLUME_FORMAT: GPUTextureFormat = "rgba16float";
@@ -99,7 +101,7 @@ export class VolumetricRenderer extends renderer.Renderer {
     // 1/8 of the grid on each side, r32float
     private brickTexture: GPUTexture;
     private brickView: GPUTextureView;
-    private bricksBindGroups: GPUBindGroup[];   // by thermo.index
+    private bricksBindGroups: GPUBindGroup[] = [];
 
     // The raymarch target, recreated when the canvas or resolution scale changes
     private volumeTexture: GPUTexture | undefined;
@@ -159,14 +161,6 @@ export class VolumetricRenderer extends renderer.Renderer {
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
         });
         this.brickView = this.brickTexture.createView();
-        this.bricksBindGroups = [0, 1].map(i => device.createBindGroup({
-            label: `bricks ${i}`,
-            layout: this.bricksPipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: stage.fields.thermo.view(i) },
-                { binding: 1, resource: this.brickView }
-            ]
-        }));
 
         fillTestVolume(stage.fields);
     }
@@ -198,6 +192,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         lighting.add(this.lighting, 'extinction', 0.0002, 0.01, 0.0001);
 
         const debug = folder.addFolder('Debug');
+        debug.add({ focus: () => this.focusRotation() }, 'focus').name('Look at near-ground rotation');
         const view = debug.add(this, 'debugView', Object.keys(DEBUG_VIEWS)).name('view');
         const boost = debug.add(this, 'debugBoost').name('boost faint cloud');
         const scale = debug.add(this, 'debugScale', 0, 1);
@@ -215,6 +210,16 @@ export class VolumetricRenderer extends renderer.Renderer {
         view.onChange(showScale);
         boost.onChange(showScale);
         showScale();
+    }
+
+    private focusRotation() {
+        const target = this.stage.solver.storm.rotationLocation;
+        if (!target) return;
+        const camera = this.stage.camera;
+        camera.threeCamera.position.set(target[0], 1100, target[2] + 4000);
+        camera.yaw = -90;
+        camera.pitch = Math.atan2(600 - 1100, 4000) * 180 / Math.PI;
+        camera.moved = true;
     }
 
     override stop() {
@@ -251,6 +256,15 @@ export class VolumetricRenderer extends renderer.Renderer {
         const depth = gis.sceneDepthTexture;
 
         if (depth !== this.boundDepth || this.boundDustVersion !== fields.dustStorageVersion) {
+            this.bricksBindGroups = Array.from({ length: 4 }, (_, i) => device.createBindGroup({
+                label: `bricks ${i}`,
+                layout: this.bricksPipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: fields.thermo.view(i & 1) },
+                    { binding: 1, resource: this.brickView },
+                    { binding: 2, resource: fields.dustDensity.view(i >> 1) }
+                ]
+            }));
             const depthView = depth.createView();
             this.raymarchBindGroups = Array.from({ length: 16 }, (_, i) => device.createBindGroup({
                 label: `raymarch ${i}`,
@@ -313,6 +327,10 @@ export class VolumetricRenderer extends renderer.Renderer {
         u[19] = DEBUG_VIEWS[this.debugView];
         f[20] = this.debugScale;
         u[21] = this.debugBoost ? 1 : 0;
+        const dust = this.stage.solver.dust;
+        // Geometric-optics extinction for spherical grains, with efficiency Q = 2.
+        f[22] = 3 / (2 * dust.grainDensity * dust.grainRadiusMicrons * 1e-6);
+        u[23] = dust.enabled && dust.hasDust ? 1 : 0;
         renderer.device.queue.writeBuffer(this.paramsBuffer, 0, this.paramsData);
     }
 
@@ -336,7 +354,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         if (this.brickSkipping || this.debugView === 'bricks') {
             const bricksPass = encoder.beginComputePass({ label: "bricks pass", timestampWrites: profiler?.passWrites("bricks") });
             bricksPass.setPipeline(this.bricksPipeline);
-            bricksPass.setBindGroup(0, this.bricksBindGroups[fields.thermo.index]);
+            bricksPass.setBindGroup(0, this.bricksBindGroups[fields.thermo.index + 2 * fields.dustDensity.index]);
             bricksPass.dispatchWorkgroups(...BRICK_DIMS);
             bricksPass.end();
         }

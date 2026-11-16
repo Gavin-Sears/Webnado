@@ -17,7 +17,9 @@ struct RaymarchParams {
     brickSkipping: u32,
     debugView: u32,
     debugScale: f32,
-    debugBoost: u32         // density view: 1 makes faint cloud visible
+    debugBoost: u32,        // density view: 1 makes faint cloud visible
+    dustExtinction: f32,    // m2/kg of suspended dust
+    dustVisible: u32
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -41,10 +43,39 @@ const brickWorldSize = cellSize * f32(${brickSize});
 // MATERIAL
 // ========
 
+fn dustDensityAt(uvw: vec3f) -> f32 {
+    let dimensions = vec3i(textureDimensions(dustDensity));
+    let position = clamp(uvw * vec3f(dimensions) - 0.5, vec3f(0), vec3f(dimensions - 1));
+    let base = vec3i(floor(position));
+    let fraction = fract(position);
+    var density = 0.0;
+    for (var z = 0; z < 2; z++) {
+        for (var y = 0; y < 2; y++) {
+            for (var x = 0; x < 2; x++) {
+                let corner = vec3i(x, y, z);
+                let weight = mix(1.0 - fraction, fraction, vec3f(corner));
+                density += weight.x * weight.y * weight.z
+                    * textureLoad(dustDensity, min(base + corner, dimensions - 1), 0).r;
+            }
+        }
+    }
+    return density;
+}
+
 // Fraction of light blocked per meter at a point (1/m)
+fn materialAt(world: vec3f) -> vec2f {
+    let uvw = (world - domainMin) / domainSize;
+    let q = textureSampleLevel(thermo, linearSampler, uvw, 0.0);
+    var dust = 0.0;
+    if (params.dustVisible != 0u) {
+        dust = dustDensityAt(uvw) * params.dustExtinction;
+    }
+    return max(vec2f((q.z + q.w) * params.extinction, dust), vec2f(0));
+}
+
 fn extinctionAt(world: vec3f) -> f32 {
-    let q = textureSampleLevel(thermo, linearSampler, (world - domainMin) / domainSize, 0.0);
-    return (q.z + q.w) * params.extinction;
+    let material = materialAt(world);
+    return material.x + material.y;
 }
 
 // How much scattered light goes cosTheta away from its original direction. Integrates to 1 over the sphere.
@@ -129,7 +160,8 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             }
         }
 
-        let extinction = extinctionAt(world);
+        let material = materialAt(world);
+        let extinction = material.x + material.y;
         if (extinction > 0.0) {
             // Fraction of light that makes it through this step unblocked (Beer-Lambert)
             // Notice that the scene (tEnd) can stop the ray as well
@@ -139,8 +171,8 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             let shadowOffset = fract(jitter + stepNumber * 0.618034);
             // Clouds barely absorb light, so the light a step blocks is the light it scatters
             // That fraction is at most 1, so long steps can't over-brighten (Hillaire 2015).
-            // Dust will eventually require albedo
-            light += transmittance * inScattered(world, sunPhase, shadowOffset) * (1.0 - stepTransmittance);
+            let albedo = (vec3f(material.x) + material.y * vec3f(0.65, 0.48, 0.28)) / extinction;
+            light += transmittance * albedo * inScattered(world, sunPhase, shadowOffset) * (1.0 - stepTransmittance);
             transmittance *= stepTransmittance;
             if (transmittance < earlyExitTransmittance) {
                 break;
@@ -185,6 +217,16 @@ fn vorticityAt(uvw: vec3f) -> vec3f {
     let dy = (velocityAt(uvw + vec3f(0.0, cell.y, 0.0)) - velocityAt(uvw - vec3f(0.0, cell.y, 0.0))) / (2.0 * cellSize.y);
     let dz = (velocityAt(uvw + vec3f(0.0, 0.0, cell.z)) - velocityAt(uvw - vec3f(0.0, 0.0, cell.z))) / (2.0 * cellSize.z);
     return vec3f(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
+}
+
+fn horizontalRotationAt(uvw: vec3f) -> vec2f {
+    let cell = 1.0 / vec3f(gridDims);
+    let dx = (velocityAt(uvw + vec3f(cell.x, 0, 0)) - velocityAt(uvw - vec3f(cell.x, 0, 0))) / (2.0 * cellSize.x);
+    let dz = (velocityAt(uvw + vec3f(0, 0, cell.z)) - velocityAt(uvw - vec3f(0, 0, cell.z))) / (2.0 * cellSize.z);
+    let trace = dx.x + dz.z;
+    let determinant = dx.x * dz.z - dz.x * dx.z;
+    let swirl = 0.5 * sqrt(max(0.0, 4.0 * determinant - trace * trace));
+    return vec2f(dz.x - dx.z, swirl);
 }
 
 // Unlit, half a cell per step, unaffected by quality settings
@@ -246,6 +288,12 @@ fn debugMarch(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32) -> vec4f {
                 let speed = length(velocity);
                 sampleColor = 0.5 + 0.5 * velocity / max(speed, 1e-6);
                 opacity = 0.05 * clamp(speed / params.debugScale, 0.0, 1.0);
+            }
+            case 9u, 10u: {
+                let rotation = horizontalRotationAt(uvw);
+                let amount = select(abs(rotation.x), rotation.y, params.debugView == 10u) / params.debugScale;
+                sampleColor = select(vec3f(0.2, 0.4, 1.0), heat(amount), rotation.x >= 0.0);
+                opacity = 0.05 * clamp(amount, 0.0, 1.0);
             }
             // bricks the raymarcher won't skip, in checkerboard pattern
             default: {

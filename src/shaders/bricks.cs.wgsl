@@ -2,6 +2,7 @@
 
 @group(0) @binding(0) var thermo: texture_3d<f32>;
 @group(0) @binding(1) var brickMaxOut: texture_storage_3d<r32float, write>;
+@group(0) @binding(2) var dustDensity: texture_3d<f32>;
 
 // One cell of border on each side, because linear sampling near a brick's edge reads its neighbors' cells
 const span = ${brickSize} + 2;
@@ -19,8 +20,12 @@ fn main(@builtin(workgroup_id) brick: vec3u, @builtin(local_invocation_index) lo
     var largest = 0.0;
     for (var n = local; n < spanCells; n += threads) {
         let offset = vec3i(i32(n) % span, (i32(n) / span) % span, i32(n) / (span * span));
-        let q = textureLoad(thermo, clamp(low + offset, vec3i(0), gridDims - 1), 0);
-        largest = max(largest, q.z + q.w);
+        let cell = clamp(low + offset, vec3i(0), gridDims - 1);
+        let q = textureLoad(thermo, cell, 0);
+        let dustCell = min(cell, vec3i(textureDimensions(dustDensity)) - 1);
+        let dust = textureLoad(dustDensity, dustCell, 0).r;
+        // A conservative occupancy bound; dust and cloud keep their own optical units.
+        largest = max(largest, q.z + q.w + 1000.0 * dust);
     }
 
     partial[local] = largest;

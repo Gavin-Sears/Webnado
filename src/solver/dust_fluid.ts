@@ -57,6 +57,7 @@ export class DustFluid {
     grainDensity = 490;
     dynamicViscosity = 1.285;
     loading = 0.02;
+    hasDust = false;
     lastDivergence: DivergenceReport | undefined;
 
     private allocation: ReturnType<typeof createDustStorage> | undefined;
@@ -110,7 +111,7 @@ export class DustFluid {
     buildGui(gui: GUI) {
         const folder = gui.addFolder('Dust fluid');
         folder.add(this, 'enabled').name('Enabled').onChange(() => this.clear());
-        folder.add(this, 'loading', 0.001, 0.2, 0.001).name('Seed density (kg/m3)');
+        folder.add(this, 'loading', 0.0001, 0.2, 0.0001).name('Seed density (kg/m3)');
         folder.add(this, 'grainRadiusMicrons', 10, 1000, 1).name('Grain radius (um)');
         folder.add(this, 'grainDensity', 100, 3000, 10).name('Material density (kg/m3)');
         folder.add(this, 'dynamicViscosity', 0.00001, 2, 0.00001).name('Viscosity (Pa s)');
@@ -120,10 +121,12 @@ export class DustFluid {
 
     seed() {
         this.enabled = true;
+        this.hasDust = true;
         this.seedRequested = true;
     }
 
     clear() {
+        this.hasDust = false;
         this.resetRequested = true;
         this.seedRequested = false;
     }
