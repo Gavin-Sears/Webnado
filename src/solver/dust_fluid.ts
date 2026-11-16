@@ -27,7 +27,15 @@ const bindings = {
 } as const;
 
 type KernelName = keyof typeof bindings;
-const pipelineCache = new WeakMap<GPUDevice, Record<KernelName, GPUComputePipeline>>();
+interface DustKernel {
+    pipeline: GPUComputePipeline;
+    groups: Map<string, GPUBindGroup>;
+}
+
+const pipelineCache = new WeakMap<GPUDevice, {
+    module: GPUShaderModule;
+    pipelines: Partial<Record<KernelName, GPUComputePipeline>>;
+}>();
 
 function createDustStorage() {
     const pressure = new PingPong('dust pressure', 'r32float');
@@ -56,10 +64,7 @@ export class DustFluid {
     private get storage() {
         return this.allocation ??= createDustStorage();
     }
-    private readonly kernels = {} as Record<KernelName, {
-        pipeline: GPUComputePipeline;
-        groups: Map<string, GPUBindGroup>;
-    }>;
+    private readonly kernels: Partial<Record<KernelName, DustKernel>> = {};
     private readonly readback = new URLSearchParams(location.search).has('checkDivergence')
         ? device.createBuffer({
             label: 'dust divergence readback',
@@ -76,30 +81,30 @@ export class DustFluid {
         private readonly weather: WeatherData,
         private readonly openBits: GPUTexture,
         private readonly parameters: GPUBuffer
-    ) {
-        const names = Object.keys(bindings) as KernelName[];
-        let pipelines = pipelineCache.get(device);
-        if (!pipelines) {
-            const module = device.createShaderModule({
-                label: 'two-fluid dust dynamics',
-                code: processShaderRaw([commonSource, transportSource, projectionSource, dustSource].join('\n'))
-            });
-            pipelines = {} as Record<KernelName, GPUComputePipeline>;
-            for (const name of names) {
-                pipelines[name] = device.createComputePipeline({
-                    label: `dust ${name}`,
-                    layout: 'auto',
-                    compute: { module, entryPoint: name, constants: { dustPhase: 1 } }
-                });
-            }
-            pipelineCache.set(device, pipelines);
+    ) {}
+
+    private kernel(name: KernelName): DustKernel {
+        const existing = this.kernels[name];
+        if (existing) {
+            return existing;
         }
-        for (const name of names) {
-            this.kernels[name] = {
-                pipeline: pipelines[name],
-                groups: new Map()
+        let cached = pipelineCache.get(device);
+        if (!cached) {
+            cached = {
+                module: device.createShaderModule({
+                    label: 'two-fluid dust dynamics',
+                    code: processShaderRaw([commonSource, transportSource, projectionSource, dustSource].join('\n'))
+                }),
+                pipelines: {}
             };
+            pipelineCache.set(device, cached);
         }
+        const pipeline = cached.pipelines[name] ??= device.createComputePipeline({
+            label: `dust ${name}`,
+            layout: 'auto',
+            compute: { module: cached.module, entryPoint: name, constants: { dustPhase: 1 } }
+        });
+        return this.kernels[name] = { pipeline, groups: new Map() };
     }
 
     buildGui(gui: GUI) {
@@ -173,7 +178,7 @@ export class DustFluid {
     }
 
     private solveJacobi(encoder: GPUCommandEncoder, iterations: number) {
-        const kernel = this.kernels.jacobi;
+        const kernel = this.kernel('jacobi');
         const pass = encoder.beginComputePass({
             label: 'dust pressure',
             timestampWrites: profiler?.passWrites('dust pressure')
@@ -207,7 +212,7 @@ export class DustFluid {
     }
 
     private bindGroup(name: KernelName) {
-        const kernel = this.kernels[name];
+        const kernel = this.kernel(name);
         const key = `${this.fields.dustVelocity.index}/${this.fields.dustDensity.index}/${this.fields.velocity.index}/${this.allocation?.pressure.index ?? 0}`;
         const cached = kernel.groups.get(key);
         if (cached) {
@@ -246,7 +251,7 @@ export class DustFluid {
     }
 
     private dispatch(encoder: GPUCommandEncoder, name: KernelName) {
-        const kernel = this.kernels[name];
+        const kernel = this.kernel(name);
         const pass = encoder.beginComputePass({ label: `dust ${name}`, timestampWrites: profiler?.passWrites(`dust ${name}`) });
         pass.setPipeline(kernel.pipeline);
         pass.setBindGroup(0, this.bindGroup(name));
