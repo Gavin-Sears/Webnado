@@ -258,13 +258,12 @@ export class VolumetricRenderer extends renderer.Renderer {
         const depth = gis.sceneDepthTexture;
 
         if (depth !== this.boundDepth || this.boundDustVersion !== fields.dustStorageVersion) {
-            this.bricksBindGroups = Array.from({ length: 4 }, (_, i) => device.createBindGroup({
+            this.bricksBindGroups = Array.from({ length: 2 }, (_, i) => device.createBindGroup({
                 label: `bricks ${i}`,
                 layout: this.bricksPipeline.getBindGroupLayout(0),
                 entries: [
-                    { binding: 0, resource: fields.thermo.view(i & 1) },
-                    { binding: 1, resource: this.brickView },
-                    { binding: 2, resource: fields.dustDensity.view(i >> 1) }
+                    { binding: 0, resource: fields.thermo.view(i) },
+                    { binding: 1, resource: this.brickView }
                 ]
             }));
             const depthView = depth.createView();
@@ -329,10 +328,6 @@ export class VolumetricRenderer extends renderer.Renderer {
         u[19] = DEBUG_VIEWS[this.debugView];
         f[20] = this.debugScale;
         u[21] = this.debugBoost ? 1 : 0;
-        const dust = this.stage.solver.dust;
-        // Geometric-optics extinction for spherical grains, with efficiency Q = 2.
-        f[22] = 3 / (2 * dust.grainDensity * dust.grainRadiusMicrons * 1e-6);
-        u[23] = dust.enabled && dust.hasDust ? 1 : 0;
         renderer.device.queue.writeBuffer(this.paramsBuffer, 0, this.paramsData);
     }
 
@@ -356,7 +351,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         if (this.brickSkipping || this.debugView === 'bricks') {
             const bricksPass = encoder.beginComputePass({ label: "bricks pass", timestampWrites: profiler?.passWrites("bricks") });
             bricksPass.setPipeline(this.bricksPipeline);
-            bricksPass.setBindGroup(0, this.bricksBindGroups[fields.thermo.index + 2 * fields.dustDensity.index]);
+            bricksPass.setBindGroup(0, this.bricksBindGroups[fields.thermo.index]);
             bricksPass.dispatchWorkgroups(...BRICK_DIMS);
             bricksPass.end();
         }

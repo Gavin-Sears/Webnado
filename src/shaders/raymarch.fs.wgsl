@@ -18,8 +18,6 @@ struct RaymarchParams {
     debugView: u32,
     debugScale: f32,
     debugBoost: u32,        // density view: 1 makes faint cloud visible
-    dustExtinction: f32,    // m2/kg of suspended dust
-    dustVisible: u32
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -30,8 +28,8 @@ struct RaymarchParams {
 @group(0) @binding(5) var brickMax: texture_3d<f32>;   // largest qc + qr near each brick (bricks.cs.wgsl)
 @group(0) @binding(6) var velocity: texture_3d<f32>;   // debug views only
 @group(0) @binding(7) var obstacle: texture_3d<u32>;   // debug views only
-@group(0) @binding(8) var dustVelocity: texture_3d<f32>;
-@group(0) @binding(9) var dustDensity: texture_3d<f32>;
+@group(0) @binding(8) var dustVelocity: texture_3d<f32>; // debug views only
+@group(0) @binding(9) var dustDensity: texture_3d<f32>;  // debug views only
 
 const pi = 3.14159265;
 const earlyExitTransmittance = 0.01;
@@ -63,19 +61,10 @@ fn sampleVolume(field: texture_3d<f32>, uvw: vec3f) -> vec4f {
 }
 
 // Fraction of light blocked per meter at a point (1/m)
-fn materialAt(world: vec3f) -> vec2f {
+fn extinctionAt(world: vec3f) -> f32 {
     let uvw = (world - domainMin) / domainSize;
     let q = textureSampleLevel(thermo, linearSampler, uvw, 0.0);
-    var dust = 0.0;
-    if (params.dustVisible != 0u) {
-        dust = sampleVolume(dustDensity, uvw).r * params.dustExtinction;
-    }
-    return max(vec2f((q.z + q.w) * params.extinction, dust), vec2f(0));
-}
-
-fn extinctionAt(world: vec3f) -> f32 {
-    let material = materialAt(world);
-    return material.x + material.y;
+    return max((q.z + q.w) * params.extinction, 0.0);
 }
 
 // How much scattered light goes cosTheta away from its original direction. Integrates to 1 over the sphere.
@@ -160,8 +149,7 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             }
         }
 
-        let material = materialAt(world);
-        let extinction = material.x + material.y;
+        let extinction = extinctionAt(world);
         if (extinction > 0.0) {
             // Fraction of light that makes it through this step unblocked (Beer-Lambert)
             // Notice that the scene (tEnd) can stop the ray as well
@@ -171,8 +159,7 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             let shadowOffset = fract(jitter + stepNumber * 0.618034);
             // Clouds barely absorb light, so the light a step blocks is the light it scatters
             // That fraction is at most 1, so long steps can't over-brighten (Hillaire 2015).
-            let albedo = (vec3f(material.x) + material.y * vec3f(0.65, 0.48, 0.28)) / extinction;
-            light += transmittance * albedo * inScattered(world, sunPhase, shadowOffset) * (1.0 - stepTransmittance);
+            light += transmittance * inScattered(world, sunPhase, shadowOffset) * (1.0 - stepTransmittance);
             transmittance *= stepTransmittance;
             if (transmittance < earlyExitTransmittance) {
                 break;
