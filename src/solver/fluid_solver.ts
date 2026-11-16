@@ -178,6 +178,8 @@ export class FluidSolver {
             const url = new URL(window.location.href);
             url.searchParams.set('domain', domain);
             url.searchParams.set('frame', domain === 'storm-focus' ? 'bunkers' : 'reference');
+            url.searchParams.set('precision', '32');
+            url.searchParams.set('projection', 'anelastic');
             url.searchParams.delete('follow');
             if (domain === 'storm-focus') {
                 url.searchParams.set('res', 'high');
@@ -323,7 +325,7 @@ export class FluidSolver {
         this.weather.useElReno();
         this.reset();
         this.storm.enabled = true;
-        this.dt = 2;
+        this.dt = 1;
         this.multigridCycles = 4;
         this.dust.enabled = false;
         this.confinement = 0;

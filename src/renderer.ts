@@ -86,12 +86,6 @@ export async function initWebGPU() {
 
     // Three.js shares this device and can't add features later, so tile texture formats are requested here
     const wantedFeatures: GPUFeatureName[] = ["texture-compression-bc", "texture-compression-etc2", "texture-compression-astc"];
-    if (urlParams.get('precision') === '32') {
-        if (!adapter.features.has('float32-filterable')) {
-            throw new Error('32-bit velocity rendering requires float32-filterable support.');
-        }
-        wantedFeatures.push('float32-filterable');
-    }
     if (profiling) {
         wantedFeatures.push("timestamp-query");
     }

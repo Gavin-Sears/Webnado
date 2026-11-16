@@ -218,9 +218,9 @@ export class VolumetricRenderer extends renderer.Renderer {
         const target = underCloud ? storm.cloudRotationLocation : storm.rotationLocation;
         if (!target) return;
         const camera = this.stage.camera;
-        camera.threeCamera.position.set(target[0], 1100, target[2] + 4000);
-        camera.yaw = -90;
-        camera.pitch = Math.atan2(600 - 1100, 4000) * 180 / Math.PI;
+        camera.threeCamera.position.set(target[0] + 2500, 400, target[2] + 2500);
+        camera.yaw = -135;
+        camera.pitch = Math.atan2(200, Math.hypot(2500, 2500)) * 180 / Math.PI;
         camera.moved = true;
     }
 
@@ -350,7 +350,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         solver.step(encoder);
         this.updateBindGroups();
         // Tracers follow the projected dust field; the solver owns momentum exchange.
-        debris.step(encoder, solver.dt, solver.resetVersion);
+        debris.step(encoder, solver.paused ? 0 : solver.dt, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn
         if (this.brickSkipping || this.debugView === 'bricks') {

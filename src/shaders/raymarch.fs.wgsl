@@ -43,23 +43,23 @@ const brickWorldSize = cellSize * f32(${brickSize});
 // MATERIAL
 // ========
 
-fn dustDensityAt(uvw: vec3f) -> f32 {
-    let dimensions = vec3i(textureDimensions(dustDensity));
+fn sampleVolume(field: texture_3d<f32>, uvw: vec3f) -> vec4f {
+    let dimensions = vec3i(textureDimensions(field));
     let position = clamp(uvw * vec3f(dimensions) - 0.5, vec3f(0), vec3f(dimensions - 1));
     let base = vec3i(floor(position));
     let fraction = fract(position);
-    var density = 0.0;
+    var value = vec4f(0);
     for (var z = 0; z < 2; z++) {
         for (var y = 0; y < 2; y++) {
             for (var x = 0; x < 2; x++) {
                 let corner = vec3i(x, y, z);
                 let weight = mix(1.0 - fraction, fraction, vec3f(corner));
-                density += weight.x * weight.y * weight.z
-                    * textureLoad(dustDensity, min(base + corner, dimensions - 1), 0).r;
+                value += weight.x * weight.y * weight.z
+                    * textureLoad(field, min(base + corner, dimensions - 1), 0);
             }
         }
     }
-    return density;
+    return value;
 }
 
 // Fraction of light blocked per meter at a point (1/m)
@@ -68,7 +68,7 @@ fn materialAt(world: vec3f) -> vec2f {
     let q = textureSampleLevel(thermo, linearSampler, uvw, 0.0);
     var dust = 0.0;
     if (params.dustVisible != 0u) {
-        dust = dustDensityAt(uvw) * params.dustExtinction;
+        dust = sampleVolume(dustDensity, uvw).r * params.dustExtinction;
     }
     return max(vec2f((q.z + q.w) * params.extinction, dust), vec2f(0));
 }
@@ -195,9 +195,9 @@ fn heat(x: f32) -> vec3f {
 fn velocityAt(uvw: vec3f) -> vec3f {
     let half = 0.5 / vec3f(gridDims);
     return vec3f(
-        textureSampleLevel(velocity, linearSampler, uvw + vec3f(half.x, 0.0, 0.0), 0.0).x,
-        textureSampleLevel(velocity, linearSampler, uvw + vec3f(0.0, half.y, 0.0), 0.0).y,
-        textureSampleLevel(velocity, linearSampler, uvw + vec3f(0.0, 0.0, half.z), 0.0).z
+        sampleVolume(velocity, uvw + vec3f(half.x, 0.0, 0.0)).x,
+        sampleVolume(velocity, uvw + vec3f(0.0, half.y, 0.0)).y,
+        sampleVolume(velocity, uvw + vec3f(0.0, 0.0, half.z)).z
     );
 }
 
