@@ -4,11 +4,16 @@ import type { Fields } from '../stage/fields';
 import type { FluidSolver } from '../solver/fluid_solver';
 import type { WeatherData } from './noaa_loader';
 import { halfToFloat } from '../solver/divergence_check';
-import { readTexture } from './surface_exchange.test';
+import { readBuffer, readTexture } from './surface_exchange.test';
 
 export async function checkMovingWeather(solver: FluidSolver, fields: Fields, weather: WeatherData) {
     if (weather.spatial!.manifest.version < 3) return;
     const { gridX, gridY, gridZ, domainX, domainY, domainZ } = constants;
+    device.queue.writeBuffer(solver['parameters'], 0, new Float32Array([1, 0, 0, 0, 0, 0, 0, 0]));
+    const surface = device.createCommandEncoder();
+    solver['exchangeSurface'](surface);
+    device.queue.submit([surface.finish()]);
+    const beforeResidual = new Float32Array(await readBuffer(solver['surfaceResiduals'][solver['surfaceResidualIndex']]));
     const beforeWind = new Float32Array(await readTexture(fields.velocity.textures[fields.velocity.index]));
     const beforeThermo = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
     const dx = 4;
@@ -21,12 +26,15 @@ export async function checkMovingWeather(solver: FluidSolver, fields: Fields, we
     }
     const encoder = device.createCommandEncoder();
     solver['dispatch'](encoder, 'shiftStormWindow');
+    solver['dispatch'](encoder, 'shiftSurfaceResiduals');
+    solver['surfaceResidualIndex'] = 1 - solver['surfaceResidualIndex'];
     fields.velocity.swap();
     fields.thermo.swap();
     fields.turbulence.swap();
     device.queue.submit([encoder.finish()]);
     const wind = new Float32Array(await readTexture(fields.velocity.textures[fields.velocity.index]));
     const thermo = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
+    const residual = new Float32Array(await readBuffer(solver['surfaceResiduals'][solver['surfaceResidualIndex']]));
     for (let z = -dz; z < gridZ; z++) {
         for (let y = 0; y < gridY; y++) {
             for (let x = 0; x < gridX - dx; x++) {
@@ -37,6 +45,17 @@ export async function checkMovingWeather(solver: FluidSolver, fields: Fields, we
                         || thermo[target + channel] !== beforeThermo[source + channel]) {
                         throw new Error('The moving window changed a copied interior value.');
                     }
+                }
+            }
+        }
+    }
+    for (let z = 0; z < gridZ; z++) {
+        for (let x = 0; x < gridX; x++) {
+            for (let channel = 0; channel < 4; channel++) {
+                const inside = x + dx < gridX && z + dz >= 0;
+                const expected = inside ? beforeResidual[4 * (x + dx + gridX * (z + dz)) + channel] : 0;
+                if (residual[4 * (x + gridX * z) + channel] !== expected) {
+                    throw new Error('Moving the window lost or invented pending surface heat.');
                 }
             }
         }

@@ -20,20 +20,35 @@ export async function readTexture(texture: GPUTexture): Promise<ArrayBuffer> {
     return result;
 }
 
+export async function readBuffer(source: GPUBuffer): Promise<ArrayBuffer> {
+    const buffer = device.createBuffer({ size: source.size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(source, 0, buffer, 0, source.size);
+    device.queue.submit([encoder.finish()]);
+    await buffer.mapAsync(GPUMapMode.READ);
+    const result = buffer.getMappedRange().slice(0);
+    buffer.unmap();
+    buffer.destroy();
+    return result;
+}
+
 export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, weather: WeatherData) {
     if (weather.spatial!.manifest.version < 2) return;
     const spatial = weather.spatial!;
     const { gridX, gridY, gridZ, domainX, domainY, domainZ, atmosphereSlices } = constants;
-    const dt = 60;
+    const dt = 1;
+    const steps = 120;
     const before = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
     weather.writeSpatialTime(0);
     device.queue.writeBuffer(solver['parameters'], 0, new Float32Array([dt, 0, 0, 0, 0, 0, 0, 0]));
     const encoder = device.createCommandEncoder();
     solver['prepareBoundaries'](encoder);
-    solver['dispatch'](encoder, 'surfaceExchange');
-    fields.thermo.swap();
+    for (let step = 0; step < steps; step++) {
+        solver['exchangeSurface'](encoder);
+    }
     device.queue.submit([encoder.finish()]);
     const after = new Uint16Array(await readTexture(fields.thermo.textures[fields.thermo.index]));
+    const pending = new Float32Array(await readBuffer(solver['surfaceResiduals'][solver['surfaceResidualIndex']]));
     const column = spatial.referenceColumn(atmosphereSlices, domainY, domainX, domainZ);
     const slice = 0.5 / gridY * atmosphereSlices - 0.5;
     const lower = Math.floor(slice);
@@ -52,13 +67,23 @@ export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, 
             const index = 4 * (x + gridX * gridY * z);
             const flux = spatial.surface((x + 0.5) / gridX * domainX - domainX / 2,
                 (z + 0.5) / gridZ * domainZ - domainZ / 2, 0);
-            const dryDensity = ambient(6) / (1 + 0.001 * (ambient(1) + halfToFloat(before[index + 1])));
-            actualHeat += (halfToFloat(after[index]) - halfToFloat(before[index]))
-                * dryDensity * 1004 * exner * dy * area;
-            actualWater += 0.001 * (halfToFloat(after[index + 1]) - halfToFloat(before[index + 1]))
-                * dryDensity * dy * area;
-            expectedHeat += flux[1] * dt * area;
-            expectedWater += flux[2] / 2.5e6 * dt * area;
+            const dryDensity = ambient(6) / (1 + 0.001 * ambient(1));
+            const residualIndex = 4 * (x + gridX * z);
+            const capacity = [dryDensity * 1004 * exner * dy, dryDensity * dy * 0.001];
+            actualHeat += ((halfToFloat(after[index]) - halfToFloat(before[index])) * capacity[0]
+                + pending[residualIndex]) * area;
+            actualWater += ((halfToFloat(after[index + 1]) - halfToFloat(before[index + 1])) * capacity[1]
+                + pending[residualIndex + 1]) * area;
+            expectedHeat += flux[1] * dt * steps * area;
+            expectedWater += flux[2] / 2.5e6 * dt * steps * area;
+            for (let channel = 0; channel < 2; channel++) {
+                const value = halfToFloat(after[index + channel]);
+                const quantum = Math.max(2 ** -24, 2 ** (Math.floor(Math.log2(Math.abs(value))) - 10));
+                const roundingBound = Math.max(1.01 * quantum, 2 ** -14) + 1e-6;
+                if (Math.abs(pending[residualIndex + channel] / capacity[channel]) > roundingBound) {
+                    throw new Error(`Pending surface flux at ${x},${z}, channel ${channel}: remainder ${pending[residualIndex + channel]}, value ${value}, quantum ${quantum}`);
+                }
+            }
         }
     }
     const heatError = Math.abs(actualHeat / expectedHeat - 1);

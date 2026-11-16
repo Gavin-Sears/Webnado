@@ -39,7 +39,8 @@ const kernelBindings = {
     advect: [0, 1, 2, 3, 4, 5, 6, 29],
     correctAdvection: [0, 1, 2, 3, 4, 5, 6, 7, 16],
     shiftStormWindow: [1, 2, 4, 5, 6, 14, 15, 29],
-    surfaceExchange: [0, 2, 3, 4, 6],
+    surfaceExchange: [0, 2, 3, 4, 6, 36],
+    shiftSurfaceResiduals: [29, 36, 37],
     divergence: [1, 3, 4, 11],
     jacobi: [3, 4, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
@@ -90,6 +91,12 @@ export class FluidSolver {
     private readonly divergenceView = this.divergence.createView();
     private readonly openBitsView = this.openBits.createView();
     private readonly atmosphericForceView = this.atmosphericForce.createView();
+    private readonly surfaceResiduals = [0, 1].map(index => device.createBuffer({
+        label: `surface flux remainder ${index}`,
+        size: constants.spatialWeather ? constants.gridX * constants.gridZ * 16 : 16,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+    }));
+    private surfaceResidualIndex = 0;
 
     private readonly parameters = device.createBuffer({
         label: 'solver parameters',
@@ -216,6 +223,8 @@ export class FluidSolver {
             }
         }
         if (this.resetRequested) {
+            this.surfaceResiduals.forEach(buffer => encoder.clearBuffer(buffer));
+            this.surfaceResidualIndex = 0;
             this.dust.reset(encoder);
             this.dispatch(encoder, 'clearForcing');
             this.dispatch(encoder, 'resetFields');
@@ -265,6 +274,10 @@ export class FluidSolver {
             this.fields.velocity.swap();
             this.fields.thermo.swap();
             this.fields.turbulence.swap();
+            if (this.weather.spatial) {
+                this.dispatch(encoder, 'shiftSurfaceResiduals');
+                this.surfaceResidualIndex = 1 - this.surfaceResidualIndex;
+            }
             this.storm.windowEast += this.storm.shiftX * constants.domainX / constants.gridX;
             this.storm.windowNorth -= this.storm.shiftZ * constants.domainZ / constants.gridZ;
             this.storm.shiftX = 0;
@@ -276,8 +289,7 @@ export class FluidSolver {
 
         this.prepareBoundaries(encoder);
         if (this.weather.spatial && this.weather.spatial.manifest.version >= 2) {
-            this.dispatch(encoder, 'surfaceExchange');
-            this.fields.thermo.swap();
+            this.exchangeSurface(encoder);
         }
         this.dust.predict(encoder);
         // Velocity.write and both vorticity buffers are scratch until the force/curl passes replace them.
@@ -474,6 +486,11 @@ export class FluidSolver {
         this.fields.velocity.swap();
     }
 
+    private exchangeSurface(encoder: GPUCommandEncoder) {
+        this.dispatch(encoder, 'surfaceExchange');
+        this.fields.thermo.swap();
+    }
+
     private layoutEntry(binding: number): GPUBindGroupLayoutEntry {
         const entry: GPUBindGroupLayoutEntry = {
             binding,
@@ -484,6 +501,8 @@ export class FluidSolver {
             entry.buffer = { type: 'uniform' };
         } else if (binding === 4) {
             entry.buffer = { type: 'read-only-storage' };
+        } else if (binding === 36 || binding === 37) {
+            entry.buffer = { type: 'storage' };
         } else if ([5, 6, 8, 11, 13, 15, 17, 19, 30].includes(binding)) {
             let format: GPUTextureFormat = 'rgba16float';
 
@@ -514,7 +533,8 @@ export class FluidSolver {
         const kernel = this.kernels[name];
         const velocityIndex = this.fields.velocity.index;
         const thermoIndex = this.fields.thermo.index;
-        const key = `${velocityIndex}/${thermoIndex}/${this.pressure.index}/${this.fields.turbulence.index}/${this.fields.vorticity.index}`;
+        const surfaceKey = kernelBindings[name].some(binding => binding >= 36) ? `/${this.surfaceResidualIndex}` : '';
+        const key = `${velocityIndex}/${thermoIndex}/${this.pressure.index}/${this.fields.turbulence.index}/${this.fields.vorticity.index}${surfaceKey}`;
         const cached = kernel.groups.get(key);
 
         if (cached) {
@@ -546,7 +566,9 @@ export class FluidSolver {
             30: this.fields.vorticity.read,
             31: this.fields.velocity.write,
             32: this.fields.vorticity.write,
-            33: this.fields.vorticity.read
+            33: this.fields.vorticity.read,
+            36: { buffer: this.surfaceResiduals[this.surfaceResidualIndex] },
+            37: { buffer: this.surfaceResiduals[1 - this.surfaceResidualIndex] }
         };
 
         const entries = kernelBindings[name].map(binding => ({
@@ -592,6 +614,7 @@ export class FluidSolver {
         this.multigrid?.destroy();
         this.dust.destroy();
         this.parameters.destroy();
+        this.surfaceResiduals.forEach(buffer => buffer.destroy());
         this.pressure.textures.forEach(texture => texture.destroy());
         this.divergence.destroy();
         this.openBits.destroy();

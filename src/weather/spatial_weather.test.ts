@@ -184,6 +184,21 @@ async function run() {
         expect(true, 'Moving the window preserves the interior and samples real weather at the new edges');
     }
     solver.paused = false;
+    if (spatial.manifest.version >= 3 && weather.spatialFlat) {
+        solver.storm.followStorm = true;
+        solver.storm.track({ ...initial, seconds: 1, rotatingUpdraftScore: 1,
+            updraftLocation: [constants.domainX / 3, 1000, -constants.domainZ / 3] });
+        const dt = solver.dt;
+        solver.dt = 0.05;
+        const tracking = device.createCommandEncoder();
+        solver.step(tracking);
+        device.queue.submit([tracking.finish()]);
+        await device.queue.onSubmittedWorkDone();
+        expect(solver.storm.windowEast === spatial.windowEast && solver.storm.windowNorth === spatial.windowNorth
+            && solver.storm.windowEast !== 0, 'Tracking updates the simulation and weather coordinates together');
+        solver.dt = dt;
+        solver.reset();
+    }
     for (let step = 0; step < 20; step++) {
         const encoder = device.createCommandEncoder();
         solver.step(encoder);

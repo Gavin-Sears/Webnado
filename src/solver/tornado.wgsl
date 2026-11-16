@@ -30,6 +30,19 @@ fn shiftStormWindow(@builtin(global_invocation_id) id: vec3u) {
 }
 
 @compute @workgroup_size(8, 8, 4)
+fn shiftSurfaceResiduals(@builtin(global_invocation_id) id: vec3u) {
+    if (id.y != 0u || id.x >= u32(gridDims.x) || id.z >= u32(gridDims.z)) {
+        return;
+    }
+    let source = vec2i(id.xz) + vec2i(i32(storm.region.z), i32(storm.region.w));
+    var value = vec4f(0);
+    if (all(source >= vec2i(0)) && source.x < gridDims.x && source.y < gridDims.z) {
+        value = surfaceResidual[u32(source.x + gridDims.x * source.y)];
+    }
+    surfaceResidualOut[id.x + u32(gridDims.x) * id.z] = value;
+}
+
+@compute @workgroup_size(8, 8, 4)
 fn buildVelocityGradients(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
     if (!inside(cell)) {
@@ -232,7 +245,7 @@ fn atmosphericForces(@builtin(global_invocation_id) id: vec3u) {
             let rate = (1.0 - exp(-0.5 * fade * parameters.dt)) / parameters.dt;
             force.y += rate * max(storm.timing.w * shape - velocity.y, 0.0);
         }
-        if (spatialWeather && (cell.y == 0 || !fluid(cell - vec3i(0, 1, 0)))) {
+        if (spatialWeather && surfaceAir(cell)) {
             let surface = spatialSurface(vec3f(cell) + vec3f(0.5));
             if (surface.x > 0.0) {
                 let wind = centerVelocity(cell) * vec3f(1, 0, 1);
@@ -344,16 +357,23 @@ fn surfaceExchange(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
     if (!inside(cell)) { return; }
     var state = textureLoad(thermoIn, cell, 0);
-    if (fluid(cell) && (cell.y == 0 || !fluid(cell - vec3i(0, 1, 0)))) {
+    if (surfaceAir(cell)) {
         let position = vec3f(cell) + vec3f(0.5);
         let flux = spatialSurface(position);
         let air = background(position.y);
-        let dryDensity = air.air.z / (1.0 + 0.001 * (air.state.y + state.y));
+        let dryDensity = air.air.z / (1.0 + 0.001 * air.state.y);
         let exner = pow(air.air.x / 100000.0, 287.05 / 1004.0);
         // Positive source flux carries heat or moisture from the ground into the first air cell.
-        state.x += parameters.dt * flux.y / (dryDensity * 1004.0 * exner * cellSize.y);
-        state.y += parameters.dt * 1000.0 * flux.z / (dryDensity * 2.5e6 * cellSize.y);
-        state.y = max(state.y, -air.state.y);
+        let capacity = dryDensity * cellSize.y * vec2f(1004.0 * exner, 0.001);
+        let increment = parameters.dt * vec2f(flux.y, flux.z / 2.5e6);
+        let index = id.x + u32(gridDims.x) * id.z;
+        var pending = surfaceResidual[index].xy + increment;
+        pending.y = max(pending.y, capacity.y * (-air.state.y - state.y));
+        var rounded = quantizeToF16(state.xy + pending / capacity);
+        rounded = select(rounded, vec2f(0), abs(rounded) < vec2f(0.00006103515625));
+        // Keep unrepresented heat (J/m2) and water (kg/m2) in full precision.
+        surfaceResidual[index] = vec4f(pending - (rounded - state.xy) * capacity, 0, 0);
+        state = vec4f(rounded, state.zw);
     }
     textureStore(thermoOut, cell, state);
 }

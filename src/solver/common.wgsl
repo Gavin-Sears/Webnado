@@ -62,6 +62,8 @@ struct StormParameters {
 @group(0) @binding(31) var airGradientX: texture_3d<f32>;
 @group(0) @binding(32) var airGradientY: texture_3d<f32>;
 @group(0) @binding(33) var airGradientZ: texture_3d<f32>;
+@group(0) @binding(36) var<storage, read_write> surfaceResidual: array<vec4f>;
+@group(0) @binding(37) var<storage, read_write> surfaceResidualOut: array<vec4f>;
 
 const fluidBit = 64u;
 
@@ -97,6 +99,18 @@ fn fluid(cell: vec3i) -> bool {
     }
 
     return (textureLoad(openBits, cell, 0).x & fluidBit) != 0u;
+}
+
+fn surfaceAir(cell: vec3i) -> bool {
+    if (!fluid(cell) || (cell.y > 0 && fluid(cell - vec3i(0, 1, 0)))) {
+        return false;
+    }
+    for (var y = 0; y < cell.y; y++) {
+        if (fluid(vec3i(cell.x, y, cell.z))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 fn connection(cell: vec3i, axis: i32, positive: bool) -> bool {
