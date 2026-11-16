@@ -60,7 +60,10 @@ export async function checkScalarPrecision(weather: WeatherData) {
     }
     device.queue.submit([decay.finish()]);
     const energy = await readScalarField(fields.turbulence.textures[fields.turbulence.index]);
-    const expected = 4 / (1 + 0.5 * 0.2 * 2 * 200 / (constants.domainX / gridX)) ** 2;
+    const length = constants.tkeGeometricLength
+        ? Math.cbrt(constants.domainX / gridX * constants.domainY / gridY * constants.domainZ / gridZ)
+        : constants.domainX / gridX;
+    const expected = 4 / (1 + 0.5 * constants.tkeDissipation * 2 * 200 / length) ** 2;
     if (Math.abs(energy[probe] / expected - 1) > 0.01) {
         throw new Error(`Uniform turbulence decay disagrees with its analytic solution: ${energy[probe]} versus ${expected}.`);
     }

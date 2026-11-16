@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 
 import { initWebGPU, showFatalError } from './renderer';
 import { VolumetricRenderer } from './renderers/volumetric';
-import { constants, domainName, domains, resolutionName, resolutions } from './shaders/shaders';
+import { constants, domainName, domains, resolutionName, resolutions, tkeModelName } from './shaders/shaders';
 
 import { Stage } from './stage/stage';
 
@@ -31,6 +31,11 @@ async function start() {
     gui.add(scalars, 'state', { '16 bit': '16', '32 bit': '32' }).name('Scalar precision').onChange((value: string) => {
         const url = new URL(window.location.href);
         url.searchParams.set('state', value);
+        window.location.href = url.href;
+    });
+    gui.add({ tke: tkeModelName }, 'tke', { Legacy: 'legacy', 'Deardorff coefficients': 'deardorff' }).name('TKE preset').onChange((value: string) => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('tke', value);
         window.location.href = url.href;
     });
     gui.add({ domain: domainName }, 'domain', Object.keys(domains)).onChange((domain: string) => {

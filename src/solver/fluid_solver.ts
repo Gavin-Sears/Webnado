@@ -74,7 +74,7 @@ export class FluidSolver {
     confinement = 0.025;
     turbulence = true;
     transportedVorticity = true;
-    mixing = 0.1;
+    mixing = constants.tkeScalarMixing;
     paused = false;
     microphysics: Microphysics | undefined;
     resetVersion = 0;
@@ -179,7 +179,7 @@ export class FluidSolver {
         folder.add(this, 'buoyancy', 0, 2, 0.1).name('Buoyancy');
         folder.add(this, 'confinement', 0, 0.5, 0.005).name('Vorticity confinement').disable(!!constants.spatialWeather);
         folder.add(this, 'turbulence').name('Turbulent mixing');
-        folder.add(this, 'mixing', 0, 0.5, 0.01).name('Mixing coefficient');
+        folder.add(this, 'mixing', 0, Math.max(0.5, constants.tkeScalarMixing), 0.01).name('Mixing coefficient');
         folder.add(this.warmRain, 'enabled').name('Warm-rain microphysics');
         folder.add(this, 'transportedVorticity').name('Transport vorticity');
         folder.add(this, 'addThermal').name('Add warm thermal').disable(!!constants.spatialWeather);

@@ -95,13 +95,20 @@ fn scalarNeighbor(field: texture_3d<f32>, cell: vec3i, neighbor: vec3i) -> vec4f
     return textureLoad(field, neighbor, 0);
 }
 
+fn turbulenceLength() -> f32 {
+    if (${tkeGeometricLength} != 0) {
+        return pow(cellSize.x * cellSize.y * cellSize.z, 1.0 / 3.0);
+    }
+    return cellSize.x;
+}
+
 fn eddyViscosity(k: f32) -> f32 {
     let inverseSize = 1.0 / (cellSize * cellSize);
     // Explicit diffusion stays within its stability bound, including the symmetric stress term.
     let limit = 0.2 / (parameters.dt * (inverseSize.x + inverseSize.y + inverseSize.z)
         * max(1.0, 3.0 * parameters.mixing));
     // A small energy floor lets shear start producing turbulence from a resting state.
-    return min(0.2 * cellSize.x * sqrt(max(k, 1e-4)), limit) * parameters.turbulence;
+    return min(${tkeViscosity} * turbulenceLength() * sqrt(max(k, 1e-4)), limit) * parameters.turbulence;
 }
 
 fn buoyancyAt(cell: vec3i) -> f32 {
@@ -154,7 +161,7 @@ fn energy(@builtin(global_invocation_id) id: vec3u) {
         // Warm-water, dimensionally normalized one-equation closure for Eqs. 5 and 6.
         let source = viscosity * strain - mixing * stratification + diffusion;
         let energyValue = max(0.0, previous + parameters.dt * source)
-            / (1.0 + parameters.dt * 0.2 * sqrt(max(previous, 0.0)) / cellSize.x);
+            / (1.0 + parameters.dt * ${tkeDissipation} * sqrt(max(previous, 0.0)) / turbulenceLength());
         let updatedViscosity = eddyViscosity(energyValue);
         result = vec4f(energyValue, updatedViscosity,
             3.0 * parameters.mixing * updatedViscosity, 0);

@@ -36,6 +36,8 @@ export const domainName = Object.hasOwn(domains, requestedDomain) ? requestedDom
 const [domainX, domainY, domainZ] = domains[domainName];
 const weatherQuery = new URLSearchParams(window.location.search);
 const spatialCase = weatherQuery.get('case') === 'hrrr';
+export const tkeModelName = weatherQuery.get('tke') === 'deardorff' ? 'deardorff' : 'legacy';
+const atmosphericTke = tkeModelName === 'deardorff';
 
 // Declared this way so minification keeps values that only shaders use
 export const constants = {
@@ -53,6 +55,11 @@ export const constants = {
     spatialWeather: Number(spatialCase),
     preciseScalars: Number(weatherQuery.get('state') === '32'),
     scalarFormat: weatherQuery.get('state') === '32' ? 'rgba32float' as const : 'rgba16float' as const,
+    // Deardorff coefficients: https://doi.org/10.1175/MWR-2847.1
+    tkeViscosity: atmosphericTke ? 0.1 : 0.2,
+    tkeDissipation: atmosphericTke ? 0.7 : 0.2,
+    tkeGeometricLength: Number(atmosphericTke),
+    tkeScalarMixing: atmosphericTke ? 1 : 0.1,
     anelasticAir: Number(['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '')
         && (weatherQuery.get('projection') ?? (spatialCase ? 'anelastic' : 'volume')) === 'anelastic'),
     velocityFormat: (weatherQuery.get('precision') ?? (spatialCase ? '32' : '16')) === '32'
