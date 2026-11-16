@@ -28,7 +28,7 @@ async function run() {
     const module = device.createShaderModule({ code: processShaderRaw(`
         override circulation: bool;
         override scaleHeight: f32;
-        @group(0) @binding(0) var velocityOut: texture_storage_3d<rgba16float, write>;
+        @group(0) @binding(0) var velocityOut: texture_storage_3d<${constants.velocityFormat}, write>;
         fn potential(x: f32) -> f32 {
             return 100000.0 * cos(3.14159265359 * (x + 0.5) / f32(gridDims.x));
         }
@@ -81,15 +81,17 @@ async function run() {
         device.queue.submit([encoder.finish()]);
     };
     const read = async () => {
-        const size = gridX * gridY * gridZ * 8;
+        const precise = constants.velocityFormat === 'rgba32float';
+        const texelBytes = precise ? 16 : 8;
+        const size = gridX * gridY * gridZ * texelBytes;
         const buffer = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
         const encoder = device.createCommandEncoder();
         encoder.copyTextureToBuffer({ texture: fields.velocity.textures[fields.velocity.index] },
-            { buffer, bytesPerRow: gridX * 8, rowsPerImage: gridY }, [gridX, gridY, gridZ]);
+            { buffer, bytesPerRow: gridX * texelBytes, rowsPerImage: gridY }, [gridX, gridY, gridZ]);
         device.queue.submit([encoder.finish()]);
         await buffer.mapAsync(GPUMapMode.READ);
-        const half = new Uint16Array(buffer.getMappedRange());
-        const values = Float32Array.from(half, halfToFloat);
+        const data = buffer.getMappedRange();
+        const values = precise ? new Float32Array(data).slice() : Float32Array.from(new Uint16Array(data), halfToFloat);
         buffer.unmap();
         buffer.destroy();
         return values;
