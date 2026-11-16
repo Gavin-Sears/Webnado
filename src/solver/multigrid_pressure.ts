@@ -8,7 +8,9 @@ export type PressureMethod = 'multigrid' | 'jacobi';
 const bindings = {
     buildFineGraph: [0, 7, 8, 13],
     coarsenGraph: [0, 7, 8, 9, 10],
-    initializeRhs: [0, 1, 6, 14],
+    reduceFineState: [0, 3, 13, 14, 16],
+    finishReduction: [0, 16, 17],
+    initializeRhs: [0, 1, 3, 5, 6, 14, 17],
     relaxPressure: [0, 1, 2, 3, 4, 5],
     residual: [0, 1, 2, 3, 4, 6],
     restrictResidual: [0, 1, 5, 6, 9, 11],
@@ -35,6 +37,13 @@ export class MultigridPressure {
     private readonly levels: Level[] = [];
     private readonly pipelines: Record<KernelName, GPUComputePipeline>;
     private obstacleVersion = -1;
+    private readonly reductionGroups = Math.ceil(constants.gridX * constants.gridY * constants.gridZ / 256);
+    private readonly pressureMoments = device.createBuffer({
+        size: this.reductionGroups * 16, usage: GPUBufferUsage.STORAGE
+    });
+    private readonly pressureMeans = device.createBuffer({
+        size: 8, usage: GPUBufferUsage.STORAGE
+    });
 
     constructor(
         private readonly label: string,
@@ -106,7 +115,11 @@ export class MultigridPressure {
             }
             this.obstacleVersion = obstacleVersion;
         }
+        // Keep the Neumann source compatible and its arbitrary pressure offset out of float precision.
+        this.dispatch(pass, 'reduceFineState', 0);
+        this.dispatch(pass, 'finishReduction', 0);
         this.dispatch(pass, 'initializeRhs', 0);
+        this.levels[0].pressure.swap();
         for (let cycle = 0; cycle < cycles; cycle++) {
             this.cycle(pass, 0);
         }
@@ -161,7 +174,9 @@ export class MultigridPressure {
                 12: coarse.pressure.read,
                 13: this.openBits,
                 14: this.divergence,
-                15: coarse.edges
+                15: coarse.edges,
+                16: { buffer: this.pressureMoments },
+                17: { buffer: this.pressureMeans }
             };
             group = device.createBindGroup({
                 label: `${this.label} ${name} level ${index}`,
@@ -172,14 +187,18 @@ export class MultigridPressure {
         }
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, group);
-        if (name === 'solveCoarsest') {
+        if (name === 'solveCoarsest' || name === 'finishReduction') {
             pass.dispatchWorkgroups(1);
+        } else if (name === 'reduceFineState') {
+            pass.dispatchWorkgroups(Math.min(this.reductionGroups, 256), Math.ceil(this.reductionGroups / 256));
         } else {
             pass.dispatchWorkgroups(Math.ceil(level.dims[0] / 8), Math.ceil(level.dims[1] / 8), Math.ceil(level.dims[2] / 4));
         }
     }
 
     destroy() {
+        this.pressureMoments.destroy();
+        this.pressureMeans.destroy();
         for (const [index, level] of this.levels.entries()) {
             level.parameters.destroy();
             level.textures.forEach(texture => texture.destroy());

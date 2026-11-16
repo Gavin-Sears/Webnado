@@ -21,6 +21,52 @@ struct GridParameters {
 @group(0) @binding(13) var openBits: texture_3d<u32>;
 @group(0) @binding(14) var divergence: texture_3d<f32>;
 @group(0) @binding(15) var coarseEdges: texture_3d<f32>;
+@group(0) @binding(16) var<storage, read_write> pressureMoments: array<vec4f>;
+@group(0) @binding(17) var<storage, read_write> pressureMeans: array<vec2f>;
+
+var<workgroup> momentSums: array<vec4f, 256>;
+
+fn reduceMoments(local: u32) {
+    workgroupBarrier();
+    for (var stride = 128u; stride > 0u; stride >>= 1u) {
+        if (local < stride) {
+            momentSums[local] += momentSums[local + stride];
+        }
+        workgroupBarrier();
+    }
+}
+
+@compute @workgroup_size(256)
+fn reduceFineState(@builtin(local_invocation_index) local: u32,
+    @builtin(workgroup_id) group: vec3u) {
+    let groupIndex = group.x + 256u * group.y;
+    let index = i32(256u * groupIndex + local);
+    let cell = vec3i(index % grid.dims.x, (index / grid.dims.x) % grid.dims.y,
+        index / (grid.dims.x * grid.dims.y));
+    var value = vec4f(0);
+    if (insideGrid(cell, grid.dims) && (textureLoad(openBits, cell, 0).x & 64u) != 0u) {
+        value = vec4f(textureLoad(divergence, cell, 0).x, textureLoad(pressure, cell, 0).x, 1, 0);
+    }
+    momentSums[local] = value;
+    reduceMoments(local);
+    if (local == 0u) {
+        pressureMoments[groupIndex] = momentSums[0];
+    }
+}
+
+@compute @workgroup_size(256)
+fn finishReduction(@builtin(local_invocation_index) local: u32) {
+    let groups = u32((grid.dims.x * grid.dims.y * grid.dims.z + 255) / 256);
+    var value = vec4f(0);
+    for (var index = local; index < groups; index += 256u) {
+        value += pressureMoments[index];
+    }
+    momentSums[local] = value;
+    reduceMoments(local);
+    if (local == 0u) {
+        pressureMeans[0] = momentSums[0].xy / max(momentSums[0].z, 1.0);
+    }
+}
 
 fn insideGrid(cell: vec3i, dims: vec3i) -> bool {
     return all(cell >= vec3i(0)) && all(cell < dims);
@@ -161,8 +207,11 @@ fn coarsenGraph(@builtin(global_invocation_id) id: vec3u) {
 fn initializeRhs(@builtin(global_invocation_id) id: vec3u) {
     let cell = vec3i(id);
     if (insideGrid(cell, grid.dims)) {
-        let value = select(0.0, -textureLoad(divergence, cell, 0).x, textureLoad(edges, cell, 0).w > 0.0);
+        let fluidCell = textureLoad(edges, cell, 0).w > 0.0;
+        let value = select(0.0, pressureMeans[0].x - textureLoad(divergence, cell, 0).x, fluidCell);
         textureStore(scalarOut, cell, vec4f(value, 0, 0, 0));
+        let centered = select(0.0, textureLoad(pressure, cell, 0).x - pressureMeans[0].y, fluidCell);
+        textureStore(pressureOut, cell, vec4f(centered, 0, 0, 0));
     }
 }
 
