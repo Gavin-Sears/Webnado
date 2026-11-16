@@ -211,7 +211,9 @@ export class FluidSolver {
             }
             this.weather.writeSpatialTime(this.resetRequested ? 0 : this.storm.elapsed);
             this.confinement = 0;
-            this.storm.followStorm = false;
+            if (this.resetRequested && this.weather.spatial.manifest.version >= 3) {
+                this.weather.moveSpatialWindow(0, 0);
+            }
         }
         if (this.resetRequested) {
             this.dust.reset(encoder);
@@ -246,6 +248,15 @@ export class FluidSolver {
             this.storm.shiftX = 0;
             this.storm.shiftZ = 0;
         }
+        if (this.weather.spatial && (this.storm.shiftX || this.storm.shiftZ)) {
+            const east = this.storm.windowEast + this.storm.shiftX * constants.domainX / constants.gridX;
+            const north = this.storm.windowNorth - this.storm.shiftZ * constants.domainZ / constants.gridZ;
+            if (!this.weather.moveSpatialWindow(east, north)) {
+                this.paused = true;
+                this.storm.phase = 'End of extracted weather region';
+                return;
+            }
+        }
         this.storm.write(this.dt);
 
         if (this.storm.enabled && (this.storm.shiftX || this.storm.shiftZ)) {
@@ -264,7 +275,7 @@ export class FluidSolver {
         }
 
         this.prepareBoundaries(encoder);
-        if (this.weather.spatial?.manifest.version === 2) {
+        if (this.weather.spatial && this.weather.spatial.manifest.version >= 2) {
             this.dispatch(encoder, 'surfaceExchange');
             this.fields.thermo.swap();
         }
@@ -348,7 +359,8 @@ export class FluidSolver {
         this.storm.liftSpeed = 0;
         this.storm.liftDuration = 0;
         this.storm.balanceReference = false;
-        this.storm.followStorm = false;
+        this.storm.followStorm = this.weather.spatial!.manifest.version >= 3 && this.weather.spatialFlat
+            && new URLSearchParams(location.search).get('follow') === '1';
         this.dt = 1;
         this.multigridCycles = 4;
         this.confinement = 0;

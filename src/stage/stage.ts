@@ -46,8 +46,10 @@ export class Stage {
 
         const gis = await GisTerrain.create(site);
         await gis.connect(fields);
-        if (weather.spatial) {
+        if (weather.spatial && !weather.spatialFlat) {
             gis.useSpatialTerrain(weather.spatial);
+        } else if (weather.spatial && weather.spatialFlat) {
+            gis.status = 'Flat comparison terrain for the weather window';
         }
 
         const solver = new FluidSolver(fields, weather);

@@ -13,6 +13,16 @@ fn shiftStormWindow(@builtin(global_invocation_id) id: vec3u) {
         velocity = textureLoad(velocityIn, source, 0);
         thermo = textureLoad(thermoIn, source, 0);
         energyValue = textureLoad(turbulenceIn, source, 0);
+    } else if (spatialWeather) {
+        let position = vec3f(cell) + vec3f(0.5);
+        let state = spatialState(position);
+        thermo = state.thermo - vec4f(background(position.y).state.xy, 0, 0);
+        energyValue = vec4f(state.energy, 0, 0, 0);
+        for (var axis = 0; axis < 3; axis++) {
+            var offset = vec3f(0.5);
+            offset[axis] = 0.0;
+            velocity[axis] = spatialState(vec3f(cell) + offset).wind[axis];
+        }
     }
     textureStore(velocityOut, cell, velocity);
     textureStore(thermoOut, cell, thermo);

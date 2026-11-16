@@ -5,7 +5,7 @@ import type { FluidSolver } from '../solver/fluid_solver';
 import { halfToFloat } from '../solver/divergence_check';
 import type { WeatherData } from './noaa_loader';
 
-async function readTexture(texture: GPUTexture): Promise<ArrayBuffer> {
+export async function readTexture(texture: GPUTexture): Promise<ArrayBuffer> {
     const bytesPerTexel = texture.format === 'rgba32float' ? 16 : 8;
     const buffer = device.createBuffer({ size: constants.gridX * constants.gridY * constants.gridZ * bytesPerTexel,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
@@ -21,7 +21,7 @@ async function readTexture(texture: GPUTexture): Promise<ArrayBuffer> {
 }
 
 export async function checkSurfaceExchange(solver: FluidSolver, fields: Fields, weather: WeatherData) {
-    if (weather.spatial!.manifest.version !== 2) return;
+    if (weather.spatial!.manifest.version < 2) return;
     const spatial = weather.spatial!;
     const { gridX, gridY, gridZ, domainX, domainY, domainZ, atmosphereSlices } = constants;
     const dt = 60;

@@ -33,14 +33,18 @@ export class SpatialWeather {
     readonly width: number;
     readonly depth: number;
     readonly levels: number;
+    windowEast = 0;
+    windowNorth = 0;
+    private readonly headerFloats: number;
 
     constructor(readonly manifest: SpatialWeatherManifest, readonly values: Float32Array) {
         this.width = values[0];
         this.depth = values[1];
         this.levels = values[2];
-        const surfaceValues = manifest.version === 2 ? this.width * this.depth * manifest.frames * 8 : 0;
-        const expected = 24 + this.width * this.depth * this.levels * manifest.frames * 16 + surfaceValues;
-        if (![1, 2].includes(manifest.version) || values.length !== expected
+        this.headerFloats = manifest.version >= 3 ? 32 : 24;
+        const surfaceValues = manifest.version >= 2 ? this.width * this.depth * manifest.frames * 8 : 0;
+        const expected = this.headerFloats + this.width * this.depth * this.levels * manifest.frames * 16 + surfaceValues;
+        if (![1, 2, 3].includes(manifest.version) || values.length !== expected
             || manifest.bytes !== values.byteLength || values[3] !== manifest.frames
             || manifest.frames < 2 || manifest.frames > 4
             || manifest.shape.join() !== [this.width, this.levels, this.depth].join()) {
@@ -69,6 +73,8 @@ export class SpatialWeather {
     }
 
     gridCoordinate(east: number, south: number): [number, number] {
+        east += this.windowEast;
+        south -= this.windowNorth;
         const a = this.values;
         const latitude = a[12];
         const longitude = a[13];
@@ -112,12 +118,12 @@ export class SpatialWeather {
     }
 
     surface(east: number, south: number, seconds: number): number[] {
-        if (this.manifest.version !== 2) return [0, 0, 0, 0];
+        if (this.manifest.version < 2) return [0, 0, 0, 0];
         const [x, z] = this.gridCoordinate(east, south);
         const baseX = Math.min(Math.floor(x), this.width - 2);
         const baseZ = Math.min(Math.floor(z), this.depth - 2);
         const time = Math.min(seconds / this.manifest.intervalSeconds, this.manifest.frames - 1);
-        const start = 24 + this.width * this.depth * this.levels * this.manifest.frames * 16;
+        const start = this.headerFloats + this.width * this.depth * this.levels * this.manifest.frames * 16;
         const result = [0, 0, 0, 0];
         for (let t = 0; t <= 1; t++) {
             const frame = Math.min(Math.floor(time) + t, this.manifest.frames - 1);
@@ -153,7 +159,7 @@ export class SpatialWeather {
     }
 
     balanceBoundaryFlux(column: Float32Array, grid: [number, number, number],
-        size: [number, number, number], stratified: boolean): number[] {
+        size: [number, number, number], stratified: boolean, terrainMask = true): number[] {
         const [nx, ny, nz] = grid;
         const [width, height, depth] = size;
         const slices = column.length / 8;
@@ -169,8 +175,9 @@ export class SpatialWeather {
                 for (let z = 0; z < nz; z++) {
                     const east = normal * width / 2;
                     const south = (z + 0.5) / nz * depth - depth / 2;
-                    const terrain = this.sample(east - normal * width / nx / 2, level, south).terrain;
-                    if (level + this.manifest.groundMsl >= terrain) {
+                    const terrain = terrainMask
+                        ? this.sample(east - normal * width / nx / 2, level, south).terrain : -Infinity;
+                    if (!terrainMask || level + this.manifest.groundMsl >= terrain) {
                         faces.push({ east, south, height: level, normal, axis: 'east',
                             weight: density * depth / nz * height / ny });
                     }
@@ -178,8 +185,9 @@ export class SpatialWeather {
                 for (let x = 0; x < nx; x++) {
                     const east = (x + 0.5) / nx * width - width / 2;
                     const south = normal * depth / 2;
-                    const terrain = this.sample(east, level, south - normal * depth / nz / 2).terrain;
-                    if (level + this.manifest.groundMsl >= terrain) {
+                    const terrain = terrainMask
+                        ? this.sample(east, level, south - normal * depth / nz / 2).terrain : -Infinity;
+                    if (!terrainMask || level + this.manifest.groundMsl >= terrain) {
                         faces.push({ east, south, height: level, normal, axis: 'south',
                             weight: density * width / nx * height / ny });
                     }
@@ -199,7 +207,7 @@ export class SpatialWeather {
     }
 
     private column(x: number, z: number, height: number, frame: number): Float64Array {
-        const index = (level: number) => 24 + 16 * (
+        const index = (level: number) => this.headerFloats + 16 * (
             ((frame * this.levels + level) * this.depth + z) * this.width + x);
         let lower = 0;
         let upper = this.levels - 1;

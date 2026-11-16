@@ -45,12 +45,14 @@ def main():
         np.tan(np.pi / 4 + np.deg2rad(projection['lat_1']) / 2) ** n) / n
     rho0 = projection['R'] * factor / (
         np.tan(np.pi / 4 + np.deg2rad(projection['lat_0']) / 2) ** n)
+    # Four eight-float records: grid, map, clock/flux correction, and moving-window offset.
     header = np.array([
         east, north, levels, len(data), first['x'][0], first['y'][0],
         first['x'][1] - first['x'][0], first['y'][1] - first['y'][0],
         n, factor, rho0, projection['R'], np.deg2rad(latitude), np.deg2rad(longitude),
         args.ground_msl, np.deg2rad(projection['lon_0']),
-        0, 3600, 2, 0, 0, 0, 0, 0
+        0, 3600, 3, 4, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
     ], dtype='<f4')
     args.output.mkdir(parents=True, exist_ok=True)
     target = args.output / 'state.bin'
@@ -89,7 +91,7 @@ def main():
             surface[..., 3] = current['friction_velocity']
             surface.tofile(stream)
     manifest = {
-        'version': 2, 'state': 'state.bin', 'bytes': target.stat().st_size,
+        'version': 3, 'state': 'state.bin', 'bytes': target.stat().st_size,
         'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
         'center': {'latitude': latitude, 'longitude': longitude},
         'groundMsl': args.ground_msl, 'shape': [east, levels, north],

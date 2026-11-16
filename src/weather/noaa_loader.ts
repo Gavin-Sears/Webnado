@@ -35,12 +35,14 @@ export class WeatherData {
     status = "Standard atmosphere, until a sounding loads.";
     scenario: 'weather' | 'elreno' | 'hrrr' = 'weather';
     spatial: SpatialWeather | undefined;
+    readonly spatialFlat = new URLSearchParams(location.search).get('terrain') === 'flat';
     validTime = '';
     version = 0;
 
     private loading = false;
     private request: AbortController | undefined;
     private spatialStart = 0;
+    private spatialColumn: Float32Array | undefined;
     private refreshStatus = () => {};
     // Stage points this at the solver. A new column clears the cloud left by the previous one.
     onApplied = () => {};
@@ -64,11 +66,12 @@ export class WeatherData {
             constants.domainY, constants.domainX, constants.domainZ);
         const corrections = spatial.balanceBoundaryFlux(column,
             [constants.gridX, constants.gridY, constants.gridZ],
-            [constants.domainX, constants.domainY, constants.domainZ], !!constants.anelasticAir);
+            [constants.domainX, constants.domainY, constants.domainZ], !!constants.anelasticAir, !this.spatialFlat);
         console.log('Weather boundary mass correction (m/s, outward normal)', corrections);
         this.setAtmosphere(column);
         device.queue.writeBuffer(this.atmosphereBuffer, offset, spatial.values);
         this.spatial = spatial;
+        this.spatialColumn = column;
         this.spatialStart = Date.parse(spatial.manifest.sources[0].initializationUtc)
             + spatial.manifest.forecastHours[0] * 3600000;
         this.writeSpatialTime(0);
@@ -82,6 +85,31 @@ export class WeatherData {
         const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4 + 64;
         device.queue.writeBuffer(this.atmosphereBuffer, offset, new Float32Array([seconds]));
         this.validTime = new Date(this.spatialStart + seconds * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    }
+
+    moveSpatialWindow(east: number, north: number) {
+        const spatial = this.spatial!;
+        if (spatial.windowEast === east && spatial.windowNorth === north) return true;
+        const previous = [spatial.windowEast, spatial.windowNorth];
+        spatial.windowEast = east;
+        spatial.windowNorth = north;
+        for (const x of [-constants.domainX / 2, constants.domainX / 2]) {
+            for (const z of [-constants.domainZ / 2, constants.domainZ / 2]) {
+                const [i, j] = spatial.gridCoordinate(x, z);
+                if (i < 0 || j < 0 || i > spatial.width - 1 || j > spatial.depth - 1) {
+                    [spatial.windowEast, spatial.windowNorth] = previous;
+                    return false;
+                }
+            }
+        }
+        spatial.balanceBoundaryFlux(this.spatialColumn!,
+            [constants.gridX, constants.gridY, constants.gridZ],
+            [constants.domainX, constants.domainY, constants.domainZ], !!constants.anelasticAir, !this.spatialFlat);
+        const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4;
+        spatial.values.set([east, north], 24);
+        device.queue.writeBuffer(this.atmosphereBuffer, offset + 80, spatial.values.subarray(20, 24));
+        device.queue.writeBuffer(this.atmosphereBuffer, offset + 96, new Float32Array([east, north]));
+        return true;
     }
 
     setAtmosphere(values: Float32Array, status?: string) {
@@ -123,11 +151,13 @@ export class WeatherData {
             const description = {
                 source: this.spatial.manifest.forecastHours[0] ? 'HRRR model forecast' : 'HRRR model analysis',
                 physics: 'Warm rain; ice not evolved',
-                trigger: 'No synthetic storm trigger'
+                trigger: 'No synthetic storm trigger',
+                terrain: this.spatialFlat ? 'Flat comparison domain' : 'Voxelized HRRR terrain'
             };
             folder.add(description, 'source').name('Source').disable();
             folder.add(description, 'physics').name('Physics').disable();
             folder.add(description, 'trigger').name('Initiation').disable();
+            folder.add(description, 'terrain').name('Geometry').disable();
             folder.add(this.spatial.manifest.sources[0], 'initializationUtc').name('Model initialization').disable();
             folder.add(this, 'validTime').name('Weather time').listen().disable();
             folder.add(this.spatial.manifest, 'groundMsl').name('Box floor MSL (m)').disable();

@@ -155,7 +155,11 @@ struct SpatialState {
 fn spatialCoordinate(position: vec3f) -> vec3f {
     let map = atmosphere[${atmosphereSlices}u + 1u];
     let grid = atmosphere[${atmosphereSlices}u];
-    let world = domainMin + position * cellSize;
+    var world = domainMin + position * cellSize;
+    if (atmosphere[${atmosphereSlices}u + 2u].state.z >= 3.0) {
+        let offset = atmosphere[${atmosphereSlices}u + 3u].state.xy;
+        world += vec3f(offset.x, 0, -offset.y);
+    }
     let latitude = map.air.x;
     let longitude = map.air.y;
     let radial = map.state.w * cos(latitude) + world.z * sin(latitude);
@@ -171,9 +175,14 @@ fn spatialCoordinate(position: vec3f) -> vec3f {
     return vec3f(horizontal.x, world.y + map.air.z, horizontal.y);
 }
 
+fn spatialDataStart() -> u32 {
+    let version = atmosphere[${atmosphereSlices}u + 2u].state.z;
+    return ${atmosphereSlices}u + select(3u, 4u, version >= 3.0);
+}
+
 fn spatialIndex(cell: vec3u, frame: u32) -> u32 {
     let dims = vec3u(atmosphere[${atmosphereSlices}u].state.xyz);
-    return ${atmosphereSlices}u + 3u + 2u * (((frame * dims.z + cell.y) * dims.y + cell.z) * dims.x + cell.x);
+    return spatialDataStart() + 2u * (((frame * dims.z + cell.y) * dims.y + cell.z) * dims.x + cell.x);
 }
 
 fn spatialColumn(cell: vec2u, height: f32, frame: u32) -> SpatialState {
@@ -249,7 +258,7 @@ fn spatialSurface(position: vec3f) -> vec4f {
     let base = min(vec2u(floor(horizontal)), dims.xy - vec2u(2));
     let fraction = horizontal - vec2f(base);
     let time = clamp(timing.x / timing.y, 0.0, f32(dims.w - 1u));
-    let start = ${atmosphereSlices}u + 3u + 2u * dims.x * dims.y * dims.z * dims.w;
+    let start = spatialDataStart() + 2u * dims.x * dims.y * dims.z * dims.w;
     var result = vec4f(0);
     for (var t = 0u; t < 2u; t++) {
         let frame = min(u32(floor(time)) + t, dims.w - 1u);

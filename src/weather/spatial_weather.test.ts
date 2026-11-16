@@ -7,6 +7,7 @@ import { WeatherData } from './noaa_loader';
 import { halfToFloat } from '../solver/divergence_check';
 import common from '../solver/common.wgsl?raw';
 import { checkSurfaceExchange } from './surface_exchange.test';
+import { checkMovingWeather } from './moving_weather.test';
 
 const output = document.getElementById('results')!;
 
@@ -175,8 +176,12 @@ async function run() {
     samples.unmap();
     expect(true, 'Reset preserves sampled source winds, temperature, moisture, cloud, and rain');
     await checkSurfaceExchange(solver, fields, weather);
-    if (spatial.manifest.version === 2) {
+    if (spatial.manifest.version >= 2) {
         expect(true, 'Source heat and moisture budgets close, and roughness drag removes momentum');
+    }
+    await checkMovingWeather(solver, fields, weather);
+    if (spatial.manifest.version >= 3) {
+        expect(true, 'Moving the window preserves the interior and samples real weather at the new edges');
     }
     solver.paused = false;
     for (let step = 0; step < 20; step++) {
