@@ -2,6 +2,18 @@
 @group(0) @binding(1) var thermo: texture_3d<f32>;
 @group(0) @binding(2) var materials: texture_3d<u32>;
 @group(0) @binding(3) var<storage, read_write> results: array<vec4f>;
+@group(0) @binding(4) var<storage, read> atmosphere: array<AtmosphereSample>;
+
+fn densityAt(height: f32) -> f32 {
+    if (${anelasticAir} == 0) {
+        return 1.0;
+    }
+    let slice = clamp(height / f32(gridDims.y) * f32(${atmosphereSlices}) - 0.5,
+        0.0, f32(${atmosphereSlices} - 1));
+    let lower = u32(floor(slice));
+    let upper = min(lower + 1u, ${atmosphereSlices}u - 1u);
+    return mix(atmosphere[lower].air.z, atmosphere[upper].air.z, fract(slice));
+}
 
 var<workgroup> first: array<vec4f, 128>;
 var<workgroup> second: array<vec4f, 128>;
@@ -68,7 +80,10 @@ fn main(@builtin(local_invocation_index) local: u32,
                 textureLoad(velocity, cell + vec3i(1, 0, 0), 0).x,
                 textureLoad(velocity, cell + vec3i(0, 1, 0), 0).y,
                 textureLoad(velocity, cell + vec3i(0, 0, 1), 0).z);
-            let divergence = dot((upper - base) / cellSize, vec3f(1));
+            let density = densityAt(f32(cell.y) + 0.5);
+            let lowerDensity = vec3f(density, densityAt(f32(cell.y)), density);
+            let upperDensity = vec3f(density, densityAt(f32(cell.y) + 1.0), density);
+            let divergence = dot((upper * upperDensity - base * lowerDensity) / cellSize, vec3f(1)) / density;
             c.x = divergence * divergence;
             c.y = abs(divergence);
             c.z = 1;

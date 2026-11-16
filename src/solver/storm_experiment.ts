@@ -42,7 +42,7 @@ export class StormExperiment {
         folder.add(this, 'phase').name('Phase').listen().disable();
         folder.add(this, 'updraft').name('Peak updraft (m/s)').listen().disable();
         folder.add(this, 'surfaceVorticity').name('Core rotation below 1 km (1/s)').listen().disable();
-        folder.add(this, 'divergence').name('Interior divergence RMS (1/s)').listen().disable();
+        folder.add(this, 'divergence').name('Constraint error RMS (1/s)').listen().disable();
         folder.add(this, 'liftDuration', 60, 1200, 30).name('Initial lifting duration (s)');
         folder.add(this, 'liftSpeed', 1, 20, 1).name('Initial updraft (m/s)');
         folder.add(this, 'highOrder').name('Higher-order advection');
@@ -63,11 +63,11 @@ export class StormExperiment {
         this.phase = !this.enabled ? 'Off' : this.elapsed < this.liftDuration ? 'Initial lifting' : 'Free evolution';
     }
 
-    observe(fields: Fields) {
+    observe(fields: Fields, atmosphere: GPUBuffer) {
         if (!this.enabled || this.pending || this.elapsed - this.sampledAt < 60) {
             return;
         }
-        this.diagnostics ??= new StormDiagnostics();
+        this.diagnostics ??= new StormDiagnostics(atmosphere);
         this.pending = true;
         this.sampledAt = this.elapsed;
         void this.diagnostics.measure(fields, this.elapsed).then(report => {

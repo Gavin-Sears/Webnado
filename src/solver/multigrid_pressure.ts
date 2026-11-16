@@ -6,7 +6,7 @@ import source from './multigrid.wgsl?raw';
 export type PressureMethod = 'multigrid' | 'jacobi';
 
 const bindings = {
-    buildFineGraph: [0, 7, 8, 13],
+    buildFineGraph: [0, 7, 8, 13, 18],
     coarsenGraph: [0, 7, 8, 9, 10],
     reduceFineState: [0, 3, 13, 14, 16],
     finishReduction: [0, 16, 17],
@@ -37,6 +37,7 @@ export class MultigridPressure {
     private readonly levels: Level[] = [];
     private readonly pipelines: Record<KernelName, GPUComputePipeline>;
     private obstacleVersion = -1;
+    private atmosphereVersion = -1;
     private readonly reductionGroups = Math.ceil(constants.gridX * constants.gridY * constants.gridZ / 256);
     private readonly pressureMoments = device.createBuffer({
         size: this.reductionGroups * 16, usage: GPUBufferUsage.STORAGE
@@ -50,6 +51,7 @@ export class MultigridPressure {
         pressure: PingPong,
         private readonly openBits: GPUTextureView,
         private readonly divergence: GPUTextureView,
+        private readonly atmosphere: GPUBuffer,
         periodic = false
     ) {
         let pipelines = pipelineCache.get(device);
@@ -103,17 +105,18 @@ export class MultigridPressure {
         }
     }
 
-    solve(encoder: GPUCommandEncoder, obstacleVersion: number, cycles: number) {
+    solve(encoder: GPUCommandEncoder, obstacleVersion: number, cycles: number, atmosphereVersion = 0) {
         const pass = encoder.beginComputePass({
             label: this.label,
             timestampWrites: profiler?.passWrites(this.label)
         });
-        if (this.obstacleVersion !== obstacleVersion) {
+        if (this.obstacleVersion !== obstacleVersion || this.atmosphereVersion !== atmosphereVersion) {
             this.dispatch(pass, 'buildFineGraph', 0);
             for (let level = 1; level < this.levels.length; level++) {
                 this.dispatch(pass, 'coarsenGraph', level);
             }
             this.obstacleVersion = obstacleVersion;
+            this.atmosphereVersion = atmosphereVersion;
         }
         // Keep the Neumann source compatible and its arbitrary pressure offset out of float precision.
         this.dispatch(pass, 'reduceFineState', 0);
@@ -176,7 +179,8 @@ export class MultigridPressure {
                 14: this.divergence,
                 15: coarse.edges,
                 16: { buffer: this.pressureMoments },
-                17: { buffer: this.pressureMeans }
+                17: { buffer: this.pressureMeans },
+                18: { buffer: this.atmosphere }
             };
             group = device.createBindGroup({
                 label: `${this.label} ${name} level ${index}`,

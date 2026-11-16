@@ -9,8 +9,9 @@ fn divergence(@builtin(global_invocation_id) id: vec3u) {
 
     if (fluid(cell)) {
         for (var axis = 0; axis < 3; axis++) {
-            let upper = faceVelocity(cell + axisOffset(axis), axis);
-            let lower = faceVelocity(cell, axis);
+            let upperCell = cell + axisOffset(axis);
+            let upper = airFaceDensity(upperCell, axis) * faceVelocity(upperCell, axis);
+            let lower = airFaceDensity(cell, axis) * faceVelocity(cell, axis);
             value += (upper - lower) / cellSize[axis];
         }
     }
@@ -39,7 +40,8 @@ fn jacobi(@builtin(global_invocation_id) id: vec3u) {
             let neighbor = phaseCell(cell + sign * axisOffset(axis));
 
             if (inside(neighbor) && connection(cell, axis, positive)) {
-                let weight = 1.0 / (cellSize[axis] * cellSize[axis]);
+                let face = cell + select(vec3i(0), axisOffset(axis), positive);
+                let weight = airFaceDensity(face, axis) / (cellSize[axis] * cellSize[axis]);
                 sum += weight * textureLoad(pressureIn, neighbor, 0).x;
                 diagonal += weight;
             }

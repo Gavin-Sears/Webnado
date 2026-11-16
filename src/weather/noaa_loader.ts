@@ -33,6 +33,7 @@ export class WeatherData {
     hour = 21;
     status = "Standard atmosphere, until a sounding loads.";
     scenario: 'weather' | 'elreno' = 'weather';
+    version = 0;
 
     private loading = false;
     private request: AbortController | undefined;
@@ -50,6 +51,7 @@ export class WeatherData {
     }
 
     setAtmosphere(values: Float32Array, status?: string) {
+        this.version++;
         device.queue.writeBuffer(this.atmosphereBuffer, 0, values);
         if (status !== undefined) {
             this.request?.abort();

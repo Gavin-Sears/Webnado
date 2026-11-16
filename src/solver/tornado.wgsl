@@ -248,9 +248,13 @@ fn evolveVorticity(@builtin(global_invocation_id) id: vec3u) {
         let position = vec3f(cell) + vec3f(0.5);
         rotation = sampleDynamic(vorticityIn, traceBack(position)).xyz;
 
-        let stretching = rotation.x * velocityDerivative(cell, 0)
-            + rotation.y * velocityDerivative(cell, 1)
-            + rotation.z * velocityDerivative(cell, 2);
+        let dx = velocityDerivative(cell, 0);
+        let dy = velocityDerivative(cell, 1);
+        let dz = velocityDerivative(cell, 2);
+        var stretching = rotation.x * dx + rotation.y * dy + rotation.z * dz;
+        if (anelasticAir) {
+            stretching -= rotation * (dx.x + dy.y + dz.z);
+        }
         let fx = (totalForceAt(cell + vec3i(1, 0, 0)) - totalForceAt(cell - vec3i(1, 0, 0))) / (2.0 * cellSize.x);
         let fy = (totalForceAt(cell + vec3i(0, 1, 0)) - totalForceAt(cell - vec3i(0, 1, 0))) / (2.0 * cellSize.y);
         let fz = (totalForceAt(cell + vec3i(0, 0, 1)) - totalForceAt(cell - vec3i(0, 0, 1))) / (2.0 * cellSize.z);

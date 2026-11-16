@@ -19,7 +19,7 @@ const bindings = {
     coupleDust: [0, 1, 3, 4, 5, 10, 19, 20, 22],
     transportDustDensity: [0, 1, 3, 4, 20, 21],
     divergence: [1, 3, 4, 11],
-    jacobi: [3, 9, 10, 11],
+    jacobi: [3, 4, 9, 10, 11],
     project: [1, 3, 4, 5, 9],
     resetDust: [5, 21],
     clearDustPressure: [11],
@@ -169,7 +169,7 @@ export class DustFluid {
             this.dispatch(encoder, 'divergence');
             if (method === 'multigrid' && iterations > 0) {
                 this.multigrid ??= new MultigridPressure('dust multigrid', this.storage.pressure,
-                    this.openBits.createView(), this.storage.divergenceView, true);
+                    this.openBits.createView(), this.storage.divergenceView, this.weather.atmosphereBuffer, true);
                 this.multigrid.solve(encoder, this.fields.obstacleVersion, cycles);
             } else {
                 this.solveJacobi(encoder, iterations);

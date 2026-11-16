@@ -1,4 +1,5 @@
 const freeSlipGround = ${freeSlipGround} != 0;
+const anelasticAir = ${anelasticAir} != 0;
 
 struct SolverParameters {
     dt: f32,
@@ -133,6 +134,14 @@ fn background(height: f32) -> AtmosphereSample {
         mix(atmosphere[lower].state, atmosphere[upper].state, fract(slice)),
         mix(atmosphere[lower].air, atmosphere[upper].air, fract(slice))
     );
+}
+
+fn airFaceDensity(cell: vec3i, axis: i32) -> f32 {
+    if (!anelasticAir || dustPhase) {
+        return 1.0;
+    }
+    let height = f32(cell.y) + select(0.5, 0.0, axis == 1);
+    return background(height).air.z;
 }
 
 fn fieldFaceVelocity(field: texture_3d<f32>, cell: vec3i, axis: i32) -> f32 {

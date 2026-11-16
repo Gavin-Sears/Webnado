@@ -7,6 +7,7 @@ export interface DivergenceReport {
     maxBlockedFaceSpeed: number;
     nonFinite: number;
     fluidCells: number;
+    massWeighted: boolean;
 }
 
 export class DivergenceCheck {
@@ -102,17 +103,20 @@ export class DivergenceCheck {
             return data.getUint32(offset, true);
         };
 
-        const windAt = (y: number, axis: number) => {
+        const sampleAt = (height: number, channel: number) => {
             const slice = Math.max(0, Math.min(constants.atmosphereSlices - 1,
-                (y + 0.5) / gridY * constants.atmosphereSlices - 0.5));
+                height / gridY * constants.atmosphereSlices - 0.5));
             const lower = Math.floor(slice);
             const upper = Math.min(lower + 1, constants.atmosphereSlices - 1);
-            const channel = axis === 0 ? 2 : 3;
             const a = data.getFloat32(this.atmosphereOffset + lower * 32 + channel * 4, true);
             const b = data.getFloat32(this.atmosphereOffset + upper * 32 + channel * 4, true);
 
             return a + (b - a) * (slice - lower);
         };
+        const windAt = (y: number, axis: number) => sampleAt(y + 0.5, axis === 0 ? 2 : 3);
+        const massWeighted = Boolean(constants.anelasticAir) && !this.periodic;
+        const densityAt = (y: number, axis: number) => massWeighted
+            ? sampleAt(y + (axis === 1 ? 0 : 0.5), 6) : 1;
 
         const faceOpen = (position: number[], axis: number, positive: boolean) => {
             const bit = 1 << (axis * 2 + Number(positive));
@@ -175,10 +179,12 @@ export class DivergenceCheck {
                             maxBlockedFaceSpeed = Math.max(maxBlockedFaceSpeed, Math.abs(lower));
                         }
 
-                        divergence += (upper - lower) / cellSizes[axis];
+                        const upperDensity = densityAt(y + Number(axis === 1), axis);
+                        divergence += (upper * upperDensity - lower * densityAt(y, axis)) / cellSizes[axis];
                     }
 
                     if ((bits & 64) !== 0) {
+                        if (massWeighted) divergence /= sampleAt(y + 0.5, 6);
                         sumSquares += divergence * divergence;
                         maxAbsolute = Math.max(maxAbsolute, Math.abs(divergence));
                         fluidCells++;
@@ -192,7 +198,8 @@ export class DivergenceCheck {
             maxAbsolute,
             maxBlockedFaceSpeed,
             nonFinite,
-            fluidCells
+            fluidCells,
+            massWeighted
         };
     }
 

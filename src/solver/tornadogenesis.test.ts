@@ -20,7 +20,7 @@ async function run() {
     fields.setObstacles(new ObstacleGrid().materials);
     const weather = new WeatherData({ latitude: 35.5, longitude: -98 });
     const solver = new FluidSolver(fields, weather);
-    const diagnostics = new StormDiagnostics();
+    const diagnostics = new StormDiagnostics(weather.atmosphereBuffer);
     solver.startElRenoExperiment();
     const query = new URLSearchParams(location.search);
     solver.dt = Number(query.get('dt') ?? 1);

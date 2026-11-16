@@ -2,6 +2,7 @@ import { device, initWebGPU } from '../renderer';
 import { constants, processShaderRaw } from '../shaders/shaders';
 import { Fields } from '../stage/fields';
 import { StormDiagnostics } from './storm_diagnostics';
+import { WeatherData } from '../weather/noaa_loader';
 
 const output = document.getElementById('results')!;
 
@@ -14,7 +15,8 @@ async function run() {
     await initWebGPU();
     device.pushErrorScope('validation');
     const fields = new Fields(false);
-    const diagnostics = new StormDiagnostics();
+    const weather = new WeatherData({ latitude: 0, longitude: 0 });
+    const diagnostics = new StormDiagnostics(weather.atmosphereBuffer);
     const module = device.createShaderModule({ code: processShaderRaw(`
         override rotation: bool;
         @group(0) @binding(0) var velocityOut: texture_storage_3d<rgba16float, write>;
@@ -57,6 +59,7 @@ async function run() {
         output.textContent += '\nAll checks passed.';
     } finally {
         diagnostics.destroy();
+        weather.atmosphereBuffer.destroy();
     }
 }
 

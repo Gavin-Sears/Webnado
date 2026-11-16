@@ -23,6 +23,19 @@ struct GridParameters {
 @group(0) @binding(15) var coarseEdges: texture_3d<f32>;
 @group(0) @binding(16) var<storage, read_write> pressureMoments: array<vec4f>;
 @group(0) @binding(17) var<storage, read_write> pressureMeans: array<vec2f>;
+@group(0) @binding(18) var<storage, read> atmosphere: array<AtmosphereSample>;
+
+fn faceDensity(cell: vec3i, axis: i32, positive: bool) -> f32 {
+    if (${anelasticAir} == 0 || grid.periodic != 0) {
+        return 1.0;
+    }
+    let height = f32(cell.y) + select(0.5, select(0.0, 1.0, positive), axis == 1);
+    let slice = clamp(height / f32(grid.dims.y) * f32(${atmosphereSlices}) - 0.5,
+        0.0, f32(${atmosphereSlices} - 1));
+    let lower = u32(floor(slice));
+    let upper = min(lower + 1u, ${atmosphereSlices}u - 1u);
+    return mix(atmosphere[lower].air.z, atmosphere[upper].air.z, fract(slice));
+}
 
 var<workgroup> momentSums: array<vec4f, 256>;
 
@@ -98,7 +111,7 @@ fn baseWeight(cell: vec3i, axis: i32, positive: bool) -> f32 {
     if ((peer & 64u) == 0u || (peer & (1u << opposite)) == 0u) {
         return 0.0;
     }
-    return 1.0 / (cellSize[axis] * cellSize[axis]);
+    return faceDensity(cell, axis, positive) / (cellSize[axis] * cellSize[axis]);
 }
 
 @compute @workgroup_size(8, 8, 4)

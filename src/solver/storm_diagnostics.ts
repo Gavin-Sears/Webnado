@@ -24,9 +24,12 @@ export interface StormReport {
     groundLocation: number[];
     groundSwirlingStrength: number;
     swirlLocation: number[];
+    massWeighted: boolean;
 }
 
 export class StormDiagnostics {
+    constructor(private readonly atmosphere: GPUBuffer) {}
+
     private readonly groups = Math.ceil(constants.gridX * constants.gridY * constants.gridZ / 128);
     private readonly size = this.groups * 112;
     private readonly output = device.createBuffer({
@@ -50,7 +53,8 @@ export class StormDiagnostics {
                 { binding: 0, resource: fields.velocity.read },
                 { binding: 1, resource: fields.thermo.read },
                 { binding: 2, resource: fields.obstacleView },
-                { binding: 3, resource: { buffer: this.output } }
+                { binding: 3, resource: { buffer: this.output } },
+                { binding: 4, resource: { buffer: this.atmosphere } }
             ]
         }));
         pass.dispatchWorkgroups(Math.min(this.groups, 256), Math.ceil(this.groups / 256));
@@ -106,6 +110,7 @@ export class StormDiagnostics {
             divergenceMax, surfaceLocation, updraftLocation, rotatingUpdraftScore,
             groundVorticity, groundLocation,
             groundSwirlingStrength, swirlLocation,
+            massWeighted: Boolean(constants.anelasticAir),
             lowestSampleHeight: (constants.freeSlipGround ? 0.5 : 1.5) * constants.domainY / constants.gridY
         };
     }

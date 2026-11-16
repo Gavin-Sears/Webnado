@@ -40,7 +40,7 @@ const kernelBindings = {
     correctAdvection: [0, 1, 2, 3, 4, 5, 6, 7, 16],
     shiftStormWindow: [1, 2, 4, 5, 6, 14, 15, 29],
     divergence: [1, 3, 4, 11],
-    jacobi: [3, 9, 10, 11],
+    jacobi: [3, 4, 9, 10, 11],
     project: [1, 3, 4, 5, 9]
 } as const;
 
@@ -386,8 +386,9 @@ export class FluidSolver {
         this.dispatch(encoder, 'divergence');
 
         if (this.pressureMethod === 'multigrid') {
-            this.multigrid ??= new MultigridPressure('air multigrid', this.pressure, this.openBitsView, this.divergenceView);
-            this.multigrid.solve(encoder, this.fields.obstacleVersion, this.multigridCycles);
+            this.multigrid ??= new MultigridPressure('air multigrid', this.pressure,
+                this.openBitsView, this.divergenceView, this.weather.atmosphereBuffer);
+            this.multigrid.solve(encoder, this.fields.obstacleVersion, this.multigridCycles, this.weather.version);
         } else {
             this.solveJacobi(encoder);
         }

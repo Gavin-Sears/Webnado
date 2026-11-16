@@ -25,7 +25,13 @@ async function run() {
     const write = (texture: GPUTexture, values: Uint32Array | Float32Array) => device.queue.writeTexture(
         { texture }, values, { bytesPerRow: gridX * 4, rowsPerImage: gridY }, [gridX, gridY, gridZ]);
     write(mask, new Uint32Array(count).fill(127));
-    const solver = new MultigridPressure('nullspace fixture', pressure, mask.createView(), divergence.createView());
+    const atmosphere = device.createBuffer({ size: constants.atmosphereSlices * 32,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    const column = new Float32Array(constants.atmosphereSlices * 8);
+    for (let slice = 0; slice < constants.atmosphereSlices; slice++) column[slice * 8 + 6] = 1;
+    device.queue.writeBuffer(atmosphere, 0, column);
+    const solver = new MultigridPressure('nullspace fixture', pressure,
+        mask.createView(), divergence.createView(), atmosphere);
     const read = async () => {
         const buffer = device.createBuffer({ size: count * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         const encoder = device.createCommandEncoder();
@@ -92,6 +98,7 @@ async function run() {
         pressure.textures.forEach(texture => texture.destroy());
         mask.destroy();
         divergence.destroy();
+        atmosphere.destroy();
     }
 }
 
