@@ -6,6 +6,7 @@ import bricksComputeRaw from './bricks.cs.wgsl?raw';
 import compositeFragRaw from './composite.fs.wgsl?raw';
 import fullscreenVertRaw from './fullscreen.vs.wgsl?raw';
 import raymarchFragRaw from './raymarch.fs.wgsl?raw';
+import temporalFragRaw from './temporal.fs.wgsl?raw';
 import testVolumeComputeRaw from './test_volume.cs.wgsl?raw';
 
 // CONSTANTS (for use in shaders)
@@ -100,5 +101,6 @@ const raymarchSource = constants.preciseScalars
     : raymarchFragRaw;
 export const raymarchFragSrc: string = processShaderRaw(raymarchSource);
 export const compositeFragSrc: string = processShaderRaw(compositeFragRaw);
+export const temporalFragSrc: string = processShaderRaw(temporalFragRaw);
 export const bricksComputeSrc: string = processShaderRaw(bricksComputeRaw);
 export const testVolumeComputeSrc: string = processShaderRaw(testVolumeComputeRaw);
