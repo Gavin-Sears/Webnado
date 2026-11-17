@@ -1,0 +1,41 @@
+﻿.webnado-controls {
+    --background-color: #17212a;
+    --widget-color: #283947;
+    --hover-color: #354d5e;
+    --focus-color: #42667d;
+    --text-color: #edf4f8;
+    --title-background-color: #101920;
+    --number-color: #91d6f3;
+    --string-color: #b7dcc0;
+    --font-size: 12px;
+    --input-font-size: 12px;
+    --widget-height: 26px;
+    --name-width: 48%;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    border: 1px solid #456075;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px #0005;
+}
+.webnado-controls.lil-gui.autoPlace { right: 8px; top: 8px; }
+.webnado-controls > .lil-title { font-size: 16px; padding: 8px 12px; }
+.control-tabs { display: flex; gap: 5px; padding: 8px; background: #101920; }
+.control-tabs button {
+    flex: 1;
+    border: 1px solid #426075;
+    border-radius: 6px;
+    padding: 7px;
+    background: transparent;
+    color: #c8d8e3;
+    cursor: pointer;
+    font: inherit;
+}
+.control-tabs button[aria-pressed=true] { background: #305b72; color: white; border-color: #72b6d8; }
+.control-tabs button:focus-visible { outline: 2px solid #91d6f3; outline-offset: 1px; }
+.webnado-controls .control-help { margin: 9px 10px 12px; color: #bbcdd9; font: 12px/1.5 system-ui, sans-serif; }
+.webnado-controls .lil-controller { padding: 3px 6px; }
+.webnado-controls .lil-controller.lil-function button { border-radius: 5px; }
+.webnado-controls .lil-controller select { text-overflow: ellipsis; max-width: 100%; }
+.webnado-controls > .lil-children { overflow-y: auto; scrollbar-width: thin; max-height: calc(100dvh - 120px); }
+.webnado-controls.lil-closed .control-tabs { display: none; }

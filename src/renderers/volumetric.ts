@@ -4,6 +4,7 @@ import * as renderer from '../renderer';
 import * as shaders from '../shaders/shaders';
 import { Stage } from '../stage/stage';
 import { fillTestVolume } from './test_volume';
+import { help } from '../ui/help';
 
 // Draws the clouds in fields.thermo over the Three.js scene. Each frame, draw() runs gis.render(camera),
 // solver.step(encoder), then three passes of its own:
@@ -165,7 +166,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         fillTestVolume(stage.fields);
     }
 
-    buildGui(gui: GUI) {
+    buildGui(gui: GUI, inspection?: GUI) {
         const folder = gui.addFolder('Raymarcher');
 
         const quality = folder.addFolder('Quality');
@@ -191,13 +192,41 @@ export class VolumetricRenderer extends renderer.Renderer {
         lighting.add(this.lighting, 'phaseG', -0.9, 0.9, 0.01).name('phase g');
         lighting.add(this.lighting, 'extinction', 0.0002, 0.01, 0.0001);
 
-        const debug = folder.addFolder('Debug');
+        const debug = (inspection ?? folder).addFolder('Diagnostic view');
         debug.add({ focus: () => this.focusRotation() }, 'focus').name('Look at near-ground rotation');
         debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Look at rotation under cloud');
-        const view = debug.add(this, 'debugView', Object.keys(DEBUG_VIEWS)).name('view');
+        const view = debug.add(this, 'debugView', {
+            'Cloud rendering': 'off',
+            'Cloud water': 'density',
+            'Temperature anomaly': 'temperature',
+            'Air velocity': 'velocity',
+            'Vorticity magnitude': 'vorticity',
+            'Collision obstacles': 'obstacles',
+            'Occupied bricks': 'bricks',
+            'Dust density': 'dust density',
+            'Dust velocity': 'dust velocity',
+            'Vertical rotation': 'vertical rotation',
+            'Swirling strength': 'swirling strength'
+        }).name('Show');
+        const explanation = help(debug, '');
         const boost = debug.add(this, 'debugBoost').name('boost faint cloud');
         const scale = debug.add(this, 'debugScale', 0, 1);
+        const explanations: Record<string, string> = {
+            off: 'Cloud water rendered with lighting. Clear air can contain wind and rotation without visible cloud.',
+            density: 'Cloud liquid water in g/kg. Boost reveals faint cloud; it does not create cloud.',
+            temperature: 'Potential-temperature anomaly relative to the surrounding reference atmosphere: orange is warmer, blue is colder.',
+            velocity: 'Air velocity components encoded as color. A uniform color can represent a steady background wind.',
+            vorticity: 'Magnitude of local rotation, including horizontal rolls and shear. Bright regions are not necessarily tornadoes.',
+            obstacles: 'Voxelized solids used for collisions. The ground and buildings should match the scene.',
+            bricks: 'Occupied regions used to skip empty space during cloud rendering.',
+            'dust density': 'Grid-based dust mass per volume. The separate dots are visualization tracers.',
+            'dust velocity': 'Velocity of the dust fluid, including drag from air. It can differ from air velocity.',
+            'vertical rotation': 'Signed rotation about the vertical axis. This isolates vertical spin from horizontal rolls.',
+            'swirling strength': 'Local swirling strength filters out pure shear. Look for a compact, persistent column near the floor.'
+        };
+        help(debug, 'Focus buttons work once storm tracking detects rotation. Drag the scene to look around; WASD moves, Q/E moves vertically, Shift moves faster.');
         const showScale = () => {
+            explanation.textContent = explanations[this.debugView];
             const name = this.debugView === 'density' && this.debugBoost ? 'densityBoosted' : this.debugView;
             const preset = DEBUG_SCALES[name];
             boost.show(this.debugView === 'density');
