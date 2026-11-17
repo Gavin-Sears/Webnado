@@ -1,3 +1,4 @@
+import { groundElevation } from './elevation';
 import { GUI } from "lil-gui";
 import * as THREE from "three/webgpu";
 
@@ -20,6 +21,7 @@ export class GisTerrain {
     private target: THREE.RenderTarget;
     private sceneChanged = true;
     private readingTimestamp = false;
+    private usedElevationModel = false;
     private readonly layers: TileLayer[] = [];
     private readonly demo = new THREE.Group();
     private fields: Fields | undefined;
@@ -34,6 +36,7 @@ export class GisTerrain {
     latitude: number;
     longitude: number;
     elevation: number;
+    automaticElevation = true;
     status = 'Local building scene';
 
     private constructor(private threeRenderer: THREE.WebGPURenderer, readonly site: Site) {
@@ -118,7 +121,7 @@ export class GisTerrain {
             new THREE.MeshStandardMaterial({ color: 0x4a5a3c, roughness: 1 })));
         this.materials = materials;
         this.fields?.setObstacles(materials);
-        this.status = 'HRRR terrain · elevations from the weather grid';
+        this.status = 'HRRR terrain Ã‚Â· elevations from the weather grid';
         this.invalidate();
     }
 
@@ -130,25 +133,39 @@ export class GisTerrain {
         }
         folder.add(this, 'source', ['flat', 'demo', 'sample', 'cesium', 'url']).name('Source');
         folder.add(this, 'tilesetUrl').name('Tileset URL');
-        folder.add(this, 'latitude', -85, 85, 0.0001).name('Latitude');
-        folder.add(this, 'longitude', -180, 180, 0.0001).name('Longitude');
-        folder.add(this, 'elevation', -500, 5000, 1).name('Ground elevation (m)');
+        folder.add(this, 'latitude', -85, 85, 0.0001).name('Latitude').listen();
+        folder.add(this, 'longitude', -180, 180, 0.0001).name('Longitude').listen();
+        folder.add(this, 'automaticElevation').name('Automatic ground height');
+        folder.add(this, 'elevation', -500, 5000, 1).name('Ground elevation (m)').listen();
         folder.add(this, 'load').name('Load scene');
         folder.add(this, 'bakeCollisions').name('Bake visible collisions');
         folder.add(this, 'status').name('Status').listen().disable();
     }
 
-    load() {
+    async load() {
+        const request = ++this.generation;
+        if (this.source === 'cesium' && this.automaticElevation) {
+            this.status = 'Looking up ground elevation';
+            try {
+                const height = await groundElevation(this.latitude, this.longitude);
+                if (request !== this.generation) return;
+                this.elevation = height;
+            } catch (error) {
+                if (request === this.generation) this.status = `${error}; set ground height manually and retry`;
+                return;
+            }
+        }
         if (this.source === 'cesium' && !import.meta.env.VITE_CESIUM_ION_TOKEN) {
             this.status = 'Set VITE_CESIUM_ION_TOKEN in .env to load Cesium';
             return;
         }
-        this.generation++;
+        if (request !== this.generation) return;
         for (const layer of this.layers) {
             this.scene.remove(layer.tiles.group);
             layer.dispose();
         }
         this.layers.length = 0;
+        this.usedElevationModel = false;
         this.demo.visible = this.source === 'demo';
         this.materials = new ObstacleGrid().materials;
         this.fields?.setObstacles(this.materials);
@@ -175,7 +192,19 @@ export class GisTerrain {
                         if (generation === this.generation) {
                             this.status = `Loading failed: ${message}`;
                         }
-                    }
+                    },
+                    this.automaticElevation,
+                    (latitude, longitude, elevation) => {
+                        if (generation !== this.generation) return;
+                        this.latitude = this.site.latitude = latitude;
+                        this.longitude = this.site.longitude = longitude;
+                        this.elevation = this.site.elevation = elevation;
+                        this.usedElevationModel = this.automaticElevation;
+                        this.status = this.automaticElevation
+                            ? 'Ground from Open-Meteo / Copernicus DEM; bake collisions after tiles load'
+                            : 'Manual ground height; bake collisions after tiles load';
+                    },
+                    this.elevation
                 );
                 this.layers.push(layer);
                 this.scene.add(layer.tiles.group);
@@ -250,7 +279,7 @@ export class GisTerrain {
         }
         if (this.layers.length > 0) {
             const credits = this.layers.flatMap(layer => layer.tiles.getAttributions());
-            this.attribution.textContent = credits.map(credit => String(credit.value).replace(/<[^>]*>/g, '')).join(' · ');
+            this.attribution.textContent = credits.map(credit => String(credit.value).replace(/<[^>]*>/g, '')).join(' | ') + (this.usedElevationModel ? ' | Ground: Open-Meteo / Copernicus DEM' : '');
         }
         if (this.target.width !== canvas.width || this.target.height !== canvas.height) {
             this.target.setSize(canvas.width, canvas.height); // Three destroys the old textures
