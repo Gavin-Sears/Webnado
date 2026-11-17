@@ -1,3 +1,5 @@
+import { buildWeatherSelection } from './weather/weather_selection';
+import { buildSourceView } from './weather/source_view';
 import GUI from 'lil-gui';
 
 import { initWebGPU, showFatalError } from './renderer';
@@ -46,6 +48,8 @@ async function start() {
     });
 
     stage.weather.buildGui(gui);
+    void buildWeatherSelection(gui, stage.weather);
+    buildSourceView(gui, stage.weather, () => stage.solver.storm.elapsed);
     stage.gis.buildGui(gui);
     stage.solver.buildGui(gui);
     stage.debris.buildGui(gui, stage.solver.storm.enabled

@@ -1,0 +1,38 @@
+name: Build and weather checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r tools/weather/requirements.txt
+      - run: python -m unittest discover -s tools/weather -p 'test_*.py'
+  gpu:
+    if: github.event_name == 'workflow_dispatch' && vars.WEBNADO_GPU_RUNNER == 'true'
+    runs-on: [self-hosted, windows, webgpu]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:solver
+        env:
+          TEST_BROWSER_CHANNEL: chrome
