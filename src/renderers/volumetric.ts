@@ -22,28 +22,12 @@ export interface Quality {
     shadowSteps: number;
 }
 
-// Pick one with ?quality=low, medium or high. Otherwise platformQuality() picks.
+// Override the medium default with ?quality=low, medium or high.
 export const qualityPresets: Record<string, Quality> = {
     low: { resolutionScale: 0.35, stepCells: 2, maxSteps: 96, shadowSteps: 4 },
     medium: { resolutionScale: 0.5, stepCells: 1, maxSteps: 192, shadowSteps: 6 },
     high: { resolutionScale: 0.75, stepCells: 0.75, maxSteps: 384, shadowSteps: 8 }
 };
-
-// Quality presets for each GPU vendor
-function platformQuality(): string {
-    if (/Android|iPhone|iPad/i.test(navigator.userAgent)) {
-        return 'low';
-    }
-    switch (renderer.device.adapterInfo.vendor) {
-        case 'nvidia':
-        case 'amd':
-            return 'high';
-        case 'apple':
-            return 'medium';
-        default:
-            return 'low';   // intel, mobile GPUs, and anything unknown
-    }
-}
 
 // The numbers match the cases in debugMarch() (raymarch.fs.wgsl)
 const DEBUG_VIEWS: Record<string, number> = {
@@ -156,7 +140,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const device = renderer.device;
 
         const requested = new URLSearchParams(window.location.search).get('quality') ?? '';
-        this.qualityName = Object.hasOwn(qualityPresets, requested) ? requested : platformQuality();
+        this.qualityName = Object.hasOwn(qualityPresets, requested) ? requested : 'medium';
         this.quality = { ...qualityPresets[this.qualityName] };
 
         const vertex = { module: device.createShaderModule({ label: "fullscreen vert shader", code: shaders.fullscreenVertSrc }) };
