@@ -13,8 +13,8 @@ export interface Site {
     elevation?: number;
 }
 
-// Greenfield, Iowa. WeatherData loads 21 May 2024, 21:00 UTC from here.
-const DEFAULT_SITE: Site = { latitude: 41.31, longitude: -94.46 };
+// Iowa storm region. The default sounding is 21 May 2024, 20:00 UTC.
+const DEFAULT_SITE: Site = { latitude: 40.93, longitude: -95.01 };
 
 // CHECKITOUT: holds everything that outlives a renderer and connects the four sections
 export class Stage {

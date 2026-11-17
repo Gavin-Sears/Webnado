@@ -19,7 +19,7 @@ export function experimentUrl(mode: 'hrrr' | 'elreno' | 'sounding', resolution: 
 
 export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
     const folder = gui.addFolder('Choose an experiment');
-    const state = { case: '', resolution: 'high', status: 'Loading prepared weather…' };
+    const state = { case: '', resolution: 'medium', status: 'Loading prepared weather…' };
     const description = help(folder, 'Prepared 3D weather contains a modeled storm. A sounding is one vertical profile, shared across the domain.');
     const choices: Record<string, string> = {};
     const descriptions = new Map<string, string>();
@@ -47,8 +47,8 @@ export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
     if (state.case && !Object.values(choices).includes(state.case)) {
         choices['Current custom 3D weather'] = state.case;
     }
-    state.resolution = current.has('case') && current.has('res') ? current.get('res')! : 'high';
-    if (!['medium', 'high'].includes(state.resolution)) state.resolution = 'high';
+    state.resolution = current.has('case') && current.has('res') ? current.get('res')! : 'medium';
+    if (!['medium', 'high'].includes(state.resolution)) state.resolution = 'medium';
     const updateDescription = () => {
         description.textContent = descriptions.get(state.case) ?? 'Custom 3D HRRR weather. The outcome depends on the supplied weather and grid.';
     };

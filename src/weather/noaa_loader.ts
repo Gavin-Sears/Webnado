@@ -31,7 +31,7 @@ import {
 export class WeatherData {
     atmosphereBuffer: GPUBuffer;
     date = "2024-05-21";
-    hour = 21;
+    hour = 20;
     status = "Standard atmosphere, until a sounding loads.";
     scenario: 'weather' | 'elreno' | 'hrrr' = 'weather';
     spatial: SpatialWeather | undefined;
