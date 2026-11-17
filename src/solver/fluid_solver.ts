@@ -205,9 +205,10 @@ export class FluidSolver {
     }
 
     // Encode once per frame before raymarching; the renderer submits the encoder.
-    step(encoder: GPUCommandEncoder) {
-        if (this.paused && !this.resetRequested) {
-            return;
+    step(encoder: GPUCommandEncoder): boolean {
+        // Apply tracking before advancing again, independent of readback or rendering speed.
+        if ((this.paused || this.storm.waitingForTracking) && !this.resetRequested) {
+            return false;
         }
         if (this.dust.enabled) {
             this.fields.enableDustFields();
@@ -217,7 +218,7 @@ export class FluidSolver {
             if (this.storm.elapsed >= horizon && !this.resetRequested) {
                 this.paused = true;
                 this.storm.phase = 'End of available weather';
-                return;
+                return false;
             }
             this.weather.writeSpatialTime(this.resetRequested ? 0 : this.storm.elapsed);
             this.confinement = 0;
@@ -241,7 +242,7 @@ export class FluidSolver {
             this.resetRequested = false;
         }
         if (this.paused) {
-            return;
+            return false;
         }
         const highOrder = this.storm.enabled && this.storm.highOrder && !this.thermalRequested;
         device.queue.writeBuffer(this.parameters, 0, new Float32Array([
@@ -266,7 +267,7 @@ export class FluidSolver {
             if (!this.weather.moveSpatialWindow(east, north)) {
                 this.paused = true;
                 this.storm.phase = 'End of extracted weather region';
-                return;
+                return false;
             }
         }
         this.storm.write(this.dt);
@@ -345,6 +346,7 @@ export class FluidSolver {
             this.checkDivergence(encoder);
             void this.dust.checkDivergence(encoder)?.catch(console.error);
         }
+        return true;
     }
 
     addThermal() {

@@ -342,10 +342,10 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         const encoder = device.createCommandEncoder({ label: "frame" });
 
-        solver.step(encoder);
+        const advanced = solver.step(encoder);
         this.updateBindGroups();
         // Tracers follow the projected dust field; the solver owns momentum exchange.
-        debris.step(encoder, solver.paused ? 0 : solver.dt, solver.resetVersion);
+        debris.step(encoder, advanced ? solver.dt : 0, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn
         if (this.brickSkipping || this.debugView === 'bricks') {

@@ -33,8 +33,8 @@ export class StormExperiment {
     rotatingWindHeight = 0;
 
     private diagnostics: StormDiagnostics | undefined;
-    private pending = false;
-    private sampledAt = -Infinity;
+    private pending: Promise<void> | undefined;
+    private nextSample = 0;
     private generation = 0;
 
     readonly buffer = device.createBuffer({
@@ -89,15 +89,21 @@ export class StormExperiment {
             : this.elapsed < this.liftDuration ? 'Initial lifting' : 'Free evolution';
     }
 
-    observe(fields: Fields, atmosphere: GPUBuffer) {
-        if (!this.enabled || this.pending || this.elapsed - this.sampledAt < 60) {
-            return;
+    get waitingForTracking() {
+        return this.followStorm && this.pending !== undefined;
+    }
+
+    observe(fields: Fields, atmosphere: GPUBuffer): Promise<void> | undefined {
+        if (this.pending) {
+            return this.pending;
+        }
+        if (!this.enabled || this.elapsed + 1e-6 < this.nextSample) {
+            return undefined;
         }
         this.diagnostics ??= new StormDiagnostics(atmosphere);
-        this.pending = true;
-        this.sampledAt = this.elapsed;
+        this.nextSample = (Math.floor((this.elapsed + 1e-6) / 60) + 1) * 60;
         const generation = this.generation;
-        void this.diagnostics.measure(fields, this.elapsed).then(report => {
+        this.pending = this.diagnostics.measure(fields, this.elapsed).then(report => {
             if (generation !== this.generation) return;
             this.updraft = report.updraft;
             this.surfaceVorticity = report.surfaceVorticity;
@@ -111,8 +117,9 @@ export class StormExperiment {
             this.rotatingWindHeight = report.rotatingWindHeight;
             this.track(report);
         }).catch(error => console.error('Storm diagnostics failed', error)).finally(() => {
-            this.pending = false;
+            this.pending = undefined;
         });
+        return this.pending;
     }
 
     track(report: StormReport) {
@@ -139,7 +146,7 @@ export class StormExperiment {
         this.shiftZ = 0;
         this.windowEast = 0;
         this.windowNorth = 0;
-        this.sampledAt = -Infinity;
+        this.nextSample = 0;
     }
 
     destroy() {
