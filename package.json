@@ -8,11 +8,13 @@
     "dev": "vite --open",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:solver": "node tools/run-solver-tests.mjs"
   },
   "devDependencies": {
     "@types/three": "0.187.0",
     "@webgpu/types": "^0.1.74",
+    "playwright": "^1.65.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
   },

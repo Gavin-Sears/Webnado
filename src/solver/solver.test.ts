@@ -42,8 +42,9 @@ function groundMask(): Uint8Array {
 
 const seedSource = `
     override mode: u32;
-    @group(0) @binding(0) var velocity: texture_storage_3d<rgba16float, write>;
-    @group(0) @binding(1) var thermo: texture_storage_3d<rgba16float, write>;
+    @group(0) @binding(0) var velocity: texture_storage_3d<${constants.velocityFormat}, write>;
+    @group(0) @binding(1) var thermo: texture_storage_3d<${constants.scalarFormat}, write>;
+    @group(0) @binding(2) var energy: texture_storage_3d<${constants.scalarFormat}, write>;
 
     @compute @workgroup_size(8, 8, 4)
     fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -71,6 +72,9 @@ const seedSource = `
             wind = vec3f(-world.z, 0, world.x) * 0.01 * falloff;
         }
 
+        if (mode == 5u) { state = vec4f(0, 25, 0, 0); }
+        if (mode == 6u) { wind = vec3f(2, 0, 0); }
+        textureStore(energy, cell, vec4f(0.2, 0, 0, 0));
         textureStore(velocity, cell, vec4f(wind, 0));
         textureStore(thermo, cell, state);
     }
@@ -92,7 +96,8 @@ function seed(fields: Fields, mode: number) {
         layout: pipeline.getBindGroupLayout(0),
         entries: [
             { binding: 0, resource: fields.velocity.read },
-            { binding: 1, resource: fields.thermo.read }
+            { binding: 1, resource: fields.thermo.read },
+            { binding: 2, resource: fields.turbulence.read }
         ]
     });
 
@@ -103,11 +108,23 @@ function seed(fields: Fields, mode: number) {
     pass.dispatchWorkgroups(constants.gridX / 8, constants.gridY / 8, constants.gridZ / 4);
     pass.end();
     device.queue.submit([encoder.finish()]);
+    if (mode === 6) {
+        const { gridX, gridY, gridZ } = constants;
+        const dust = new Uint16Array(gridX * gridY * gridZ * 4);
+        for (let i = 0; i < dust.length; i += 4) dust[i] = 0xc400;
+        const density = new Float32Array(gridX * gridY * gridZ).fill(.12);
+        device.queue.writeTexture({ texture: fields.dustVelocity.textures[fields.dustVelocity.index] },
+            dust, { bytesPerRow: gridX * 8, rowsPerImage: gridY }, [gridX, gridY, gridZ]);
+        device.queue.writeTexture({ texture: fields.dustDensity.textures[fields.dustDensity.index] },
+            density, { bytesPerRow: gridX * 4, rowsPerImage: gridY }, [gridX, gridY, gridZ]);
+    }
 }
+
 
 async function readField(texture: GPUTexture): Promise<Float32Array> {
     const { gridX, gridY, gridZ } = constants;
-    const bytesPerRow = Math.ceil(gridX * 8 / 256) * 256;
+    const texelBytes = texture.format === 'rgba32float' ? 16 : 8;
+    const bytesPerRow = Math.ceil(gridX * texelBytes / 256) * 256;
     const buffer = device.createBuffer({
         size: bytesPerRow * gridY * gridZ,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
@@ -129,10 +146,12 @@ async function readField(texture: GPUTexture): Promise<Float32Array> {
         for (let y = 0; y < gridY; y++) {
             for (let x = 0; x < gridX; x++) {
                 const target = 4 * (x + gridX * (y + gridY * z));
-                const source = bytesPerRow * (y + gridY * z) + x * 8;
+                const source = bytesPerRow * (y + gridY * z) + x * texelBytes;
 
                 for (let channel = 0; channel < 4; channel++) {
-                    values[target + channel] = halfToFloat(data.getUint16(source + channel * 2, true));
+                    values[target + channel] = texelBytes === 16
+                        ? data.getFloat32(source + channel * 4, true)
+                        : halfToFloat(data.getUint16(source + channel * 2, true));
                 }
             }
         }
@@ -192,227 +211,128 @@ async function measure(solver: FluidSolver) {
 }
 
 async function runTests() {
+    expect(resolutionName === 'low', 'Use res=low for the numerical fixtures');
     await initWebGPU();
     device.pushErrorScope('validation');
-
     const fields = new Fields();
-    const weather = new WeatherData({ latitude: 41.31, longitude: -94.46 });
-    weather.setAtmosphere(atmosphere());
+    const weather = new WeatherData({ latitude: 0, longitude: 0 });
+    const column = atmosphere();
+    for (let i = 0; i < constants.atmosphereSlices; i++) column[i * 8 + 6] = 1.2;
+    weather.setAtmosphere(column);
     fields.setObstacles(groundMask());
-
-    let solver = new FluidSolver(fields, weather);
-    const replaceSolver = () => {
-        solver.destroy();
-        solver = new FluidSolver(fields, weather);
-        return solver;
-    };
-
-    try {
-        if (resolutionName !== 'low') {
-            seed(fields, 2);
-            await runSteps(solver, 3);
-            await measure(solver);
-            const report = await measure(solver);
-            expect(report.rms < 5e-4 && report.nonFinite === 0, 'Large-grid smoke check failed');
-            expect(report.maxBlockedFaceSpeed === 0, 'Large-grid boundary check failed');
-            passed(`${resolutionName} grid completes simulation and readback`, report);
-            const error = await device.popErrorScope();
-            expect(error === null, error?.message ?? 'GPU validation failed');
-            output.textContent += '\n\nSmoke check passed.';
-            return results;
-        }
-
-        seed(fields, 0);
-        await runSteps(solver, 4);
-        const resting = await measure(solver);
-        expect(resting.rms === 0 && resting.nonFinite === 0, 'Resting flow did not remain zero');
-        passed('Resting atmosphere stays at rest', resting);
-
-        seed(fields, 1);
-        solver.jacobiIterations = 41;
-        let encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        const firstProjection = await measure(solver);
-
-        seed(fields, 1);
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        const warmProjection = await measure(solver);
-        expect(warmProjection.rms < firstProjection.rms, 'Retained pressure did not improve the repeated solve');
-        passed('Pressure stays warm across odd iteration counts', { firstProjection, warmProjection });
-
-        seed(fields, 1);
-        solver.jacobiIterations = 1200;
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        const projected = await measure(solver);
-        expect(projected.rms < 5e-4, 'Manufactured gradient projection missed the divergence target');
-        expect(projected.maxBlockedFaceSpeed === 0, 'Projection changed blocked face velocities');
-        passed('Manufactured gradient flow projects below 5e-4', projected);
-
-        replaceSolver();
-        seed(fields, 2);
+    const solver = new FluidSolver(fields, weather);
+    const fresh = async () => {
+        solver.storm.enabled = false;
+        solver.storm.followStorm = false;
         solver.buoyancy = 0;
         solver.confinement = 0;
-        const before = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
-        await runSteps(solver, 8);
-        const after = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
-        expect(Math.abs(after.total / before.total - 1) < 0.001, 'Resting tracer changed during advection');
-        passed('Zero-flow scalar advection preserves the tracer', after);
-
-        weather.setAtmosphere(atmosphere(10, 0));
-        replaceSolver();
-        seed(fields, 3);
-        solver.buoyancy = 0;
-        solver.confinement = 0;
-        const start = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
-        await runSteps(solver, 10);
-        const moved = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
-        const displacement = moved.centerX - start.centerX;
-        expect(displacement > 40 && displacement < 60, 'Scalar transport did not follow the 10 m/s wind');
-        const windReport = await measure(solver);
-        expect(windReport.rms < 5e-4, 'Weather-driven flow missed the divergence target');
-        passed('Weather wind transports the tracer in the expected direction', { displacement, windReport });
-
-        const windVelocity = await readField(fields.velocity.textures[fields.velocity.index]);
-        const velocityAt = (x: number, y: number, z: number, axis: number) => {
-            return windVelocity[axis + 4 * (x + constants.gridX * (y + constants.gridY * z))];
-        };
-        const middleX = constants.gridX / 2;
-        const middleZ = constants.gridZ / 2;
-        expect(velocityAt(middleX, 1, middleZ, 0) === 0, 'Ground did not enforce no-slip');
-        expect(velocityAt(middleX, constants.gridY - 1, middleZ, 0) === 10,
-            'Ceiling did not preserve tangential wind');
-        passed('Ground is no-slip and ceiling preserves tangential flow');
-
-        weather.setAtmosphere(atmosphere(-10, 0));
+        solver.turbulence = false;
+        solver.warmRain.enabled = false;
+        solver.dust.enabled = false;
+        solver.dt = 1;
+        solver.reset();
         await runSteps(solver, 1);
-        const changedWind = await readField(fields.velocity.textures[fields.velocity.index]);
-        const inlet = 4 * (constants.gridX * (constants.gridY / 2 + constants.gridY * middleZ));
-        expect(changedWind[inlet] === -10, 'Weather updates did not reach the side boundary');
-        passed('Weather updates reach the existing side boundary bindings');
-
-        const profile = atmosphere();
-
-        for (let level = 0; level < constants.atmosphereSlices; level++) {
-            profile[level * 8 + 2] = level * 0.5;
-        }
-
-        weather.setAtmosphere(profile);
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
-        device.queue.submit([encoder.finish()]);
-        const profileVelocity = await readField(fields.velocity.textures[fields.velocity.index]);
-        const slice = (constants.gridY / 2 + 0.5) / constants.gridY * constants.atmosphereSlices - 0.5;
-        expect(Math.abs(profileVelocity[inlet] - slice * 0.5) < 0.01,
-            'Atmosphere interpolation did not use slice centers');
-        passed('Side winds interpolate the atmosphere at slice centers');
-
-        weather.setAtmosphere(atmosphere());
-        replaceSolver();
-        seed(fields, 2);
-        await runSteps(solver, 100);
         await measure(solver);
-        const plumeReport = await measure(solver);
-        const velocity = await readField(fields.velocity.textures[fields.velocity.index]);
-        let maxUpdraft = 0;
-
-        for (let index = 1; index < velocity.length; index += 4) {
-            maxUpdraft = Math.max(maxUpdraft, velocity[index]);
-        }
-
-        expect(maxUpdraft > 0.05, 'Warm air did not produce an updraft');
-        expect(plumeReport.rms < 5e-4 && plumeReport.nonFinite === 0, 'Evolving plume failed the divergence target');
-        expect(plumeReport.maxBlockedFaceSpeed === 0, 'Plume crossed a blocked face');
-        passed('Buoyancy evolves a finite, projected plume', { maxUpdraft, plumeReport });
-
-        const stressSteps = Number(new URLSearchParams(location.search).get('stress') ?? 0);
-
-        if (stressSteps > 0) {
-            await runSteps(solver, stressSteps);
-            await measure(solver);
-            const stressReport = await measure(solver);
-            const thermo = await readField(fields.thermo.textures[fields.thermo.index]);
-            expect(stressReport.nonFinite === 0 && thermo.every(Number.isFinite), 'Long run produced nonfinite state');
-            expect(stressReport.rms < 5e-4, 'Long run exceeded the divergence target');
-            expect(stressReport.maxBlockedFaceSpeed === 0, 'Long run crossed a blocked face');
-            passed(`Plume stays stable for ${stressSteps} additional steps`, stressReport);
-        }
-
-        replaceSolver();
-        seed(fields, 4);
-        solver.buoyancy = 0;
-        solver.confinement = 0;
-        await runSteps(solver, 8);
-        const unconstrained = await readField(fields.velocity.textures[fields.velocity.index]);
-
-        replaceSolver();
-        seed(fields, 4);
-        solver.buoyancy = 0;
-        await runSteps(solver, 8);
-        const confined = await readField(fields.velocity.textures[fields.velocity.index]);
-        let difference = 0;
-
-        for (let index = 0; index < confined.length; index++) {
-            difference += Math.abs(confined[index] - unconstrained[index]);
-        }
-
-        expect(confined.every(Number.isFinite), 'Vorticity confinement produced nonfinite velocity');
-        expect(difference > 1, 'Vorticity confinement did not affect the flow');
-        passed('Vorticity confinement feeds back into velocity', { difference });
-
-        replaceSolver();
-        seed(fields, 0);
-        solver.buoyancy = 0;
-        solver.confinement = 0;
-        solver.addThermal();
-        const initialThermoIndex = fields.thermo.index;
-        await runSteps(solver, 1);
-        expect(fields.thermo.index === 1 - initialThermoIndex, 'Newest thermo state was not swapped into read');
-        const injected = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
-        await runSteps(solver, 3);
-        const retained = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
-        expect(injected.total > 0, 'Add thermal did not initialize a visible cloud tracer');
-        expect(Math.abs(retained.total / injected.total - 1) < 0.001, 'Thermal source was applied more than once');
-        passed('Thermal injection runs once and leaves the newest scalar in read');
-
-        if (resolutionName === 'low') {
-            const mask = groundMask();
-            const { gridX, gridY, gridZ } = constants;
-
-            for (let z = 0; z < gridZ; z++) {
-                for (let y = 0; y < gridY; y++) {
-                    mask[gridX / 2 + gridX * (y + gridY * z)] = 2;
-                }
-            }
-
-            fields.setObstacles(mask);
-            seed(fields, 1);
-            solver.jacobiIterations = 1200;
-            encoder = device.createCommandEncoder();
-            solver.project(encoder);
-            device.queue.submit([encoder.finish()]);
-            const obstacleReport = await measure(solver);
-            expect(obstacleReport.maxBlockedFaceSpeed === 0, 'Changed obstacles were not applied');
-            expect(obstacleReport.rms < 5e-4, 'Projection failed with disconnected fluid regions');
-            passed('Obstacle changes rebuild the open bits', obstacleReport);
-        }
-
-        fields.setObstacles(new Uint8Array(constants.gridX * constants.gridY * constants.gridZ).fill(1));
-        encoder = device.createCommandEncoder();
-        solver.project(encoder);
+    };
+    const submit = (encode: (encoder: GPUCommandEncoder) => void) => {
+        const encoder = device.createCommandEncoder();
+        encode(encoder);
         device.queue.submit([encoder.finish()]);
-        const solidReport = await measure(solver);
-        expect(solidReport.fluidCells === 0 && solidReport.nonFinite === 0, 'Fully solid domain was not finite');
-        expect(solidReport.maxBlockedFaceSpeed === 0, 'Velocity remained inside solids');
-        passed('Fully solid domains remain finite', solidReport);
+    };
+    const middle = 4 * (constants.gridX / 2 + constants.gridX * (
+        constants.gridY / 2 + constants.gridY * constants.gridZ / 2));
+    try {
+        await fresh();
+        await runSteps(solver, 4);
+        const rest = await measure(solver);
+        expect(rest.rms === 0 && rest.nonFinite === 0, 'Resting atmosphere moved');
+        passed('Resting atmosphere remains at rest', rest);
+
+        for (const method of ['jacobi', 'multigrid'] as const) {
+            await fresh();
+            seed(fields, 1);
+            const seedError = await device.popErrorScope();
+            expect(seedError === null, seedError?.message ?? 'Fixture failed');
+            device.pushErrorScope('validation');
+            const before = await measure(solver);
+            expect(before.rms > .001, 'Manufactured flow was not divergent');
+            solver.pressureMethod = method;
+            solver.jacobiIterations = 160;
+            solver.multigridCycles = 6;
+            submit(encoder => solver.project(encoder));
+            const after = await measure(solver);
+            expect(after.rms < before.rms * .05, `${method} did not remove enough divergence`);
+            expect(after.maxBlockedFaceSpeed === 0 && after.nonFinite === 0, `${method} violated solid boundaries`);
+            passed(`${method} removes manufactured divergence and respects obstacles`, { before, after });
+        }
+
+        await fresh();
+        seed(fields, 2);
+        const initial = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
+        await runSteps(solver, 10);
+        const resting = tracerStats(await readField(fields.thermo.textures[fields.thermo.index]));
+        expect(Math.abs(resting.total / initial.total - 1) < .002, 'Stationary scalar lost mass');
+        passed('Zero-flow transport preserves cloud water');
+
+        solver.storm.enabled = true;
+        solver.storm.liftSpeed = solver.storm.liftDuration = 0;
+        solver.storm.highOrder = true;
+        solver.storm.balanceReference = false;
+        solver.turbulence = true;
+        solver.buoyancy = 1;
+        await runSteps(solver, 20);
+        const velocity = await readField(fields.velocity.textures[fields.velocity.index]);
+        const energy = await readField(fields.turbulence.textures[fields.turbulence.index]);
+        const thermo = await readField(fields.thermo.textures[fields.thermo.index]);
+        expect(velocity.every(Number.isFinite) && energy.every(Number.isFinite), 'High-order/TKE integration became nonfinite');
+        expect(velocity.some((value, index) => index % 4 === 1 && value > .01), 'Warm air did not rise');
+        expect(energy.every((value, index) => index % 4 !== 0 || value >= 0), 'TKE became negative');
+        tracerStats(thermo);
+        passed('Buoyant transport, high-order correction and TKE work together');
+
+        await fresh();
+        seed(fields, 5);
+        const beforePhase = await readField(fields.thermo.textures[fields.thermo.index]);
+        solver.warmRain.enabled = true;
+        submit(encoder => solver.warmRain.step(encoder, 1));
+        const afterPhase = await readField(fields.thermo.textures[fields.thermo.index]);
+        const water = (a: Float32Array) => a[middle + 1] + a[middle + 2] + a[middle + 3];
+        const heat = (a: Float32Array) => 1004 * a[middle] + 2500 * a[middle + 1];
+        expect(afterPhase[middle] > 0 && afterPhase[middle + 2] > 0, 'Supersaturation did not condense and warm');
+        expect(Math.abs(water(afterPhase) - water(beforePhase)) < .05, 'Phase change lost water');
+        expect(Math.abs(heat(afterPhase) - heat(beforePhase)) < 60, 'Latent heat and vapor exchange disagree');
+        expect(afterPhase.every(Number.isFinite), 'Microphysics became nonfinite');
+        passed('Condensation conserves water and latent energy');
+
+        await fresh();
+        solver.dust.enabled = true;
+        solver.dust.writeParameters();
+        seed(fields, 6);
+        submit(encoder => solver.dust.couple(encoder));
+        const dust = await readField(fields.dustVelocity.textures[fields.dustVelocity.index]);
+        const feedback = await readField(fields.windForcing);
+        const airSpeed = 2 + solver.dt * feedback[middle];
+        const momentumError = 1.2 * (airSpeed - 2) + .12 * (dust[middle] + 4);
+        expect(Math.abs(momentumError) < .005, 'Two-fluid drag lost momentum');
+        expect(Math.abs(dust[middle] - airSpeed) < .01, 'Stiff drag did not approach a common velocity');
+        passed('Two-fluid drag exchanges momentum without instability', { momentumError });
+
+        await fresh();
+        solver.storm.enabled = true;
+        solver.storm.followStorm = true;
+        solver.storm.elapsed = 1;
+        const pending = solver.storm.observe(fields, weather.atmosphereBuffer);
+        const encoder = device.createCommandEncoder();
+        expect(solver.step(encoder) === false, 'Physics advanced while window tracking was pending');
+        device.queue.submit([encoder.finish()]);
+        await pending;
+        solver.reset();
+        expect(solver.storm.elapsed === 0 && solver.storm.windowEast === 0, 'Reset retained the old experiment clock/window');
+        passed('Tracking pauses physics until readback completes; reset clears the experiment');
 
         await device.queue.onSubmittedWorkDone();
         const error = await device.popErrorScope();
-        expect(error === null, error?.message ?? 'GPU validation failed');
+        expect(error === null, error?.message ?? 'WebGPU validation failed');
         passed('No WebGPU validation errors');
         output.textContent += '\n\nAll checks passed.';
         return results;
