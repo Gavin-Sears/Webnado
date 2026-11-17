@@ -19,7 +19,8 @@ fn main(@builtin(workgroup_id) brick: vec3u, @builtin(local_invocation_index) lo
     var largest = 0.0;
     for (var n = local; n < spanCells; n += threads) {
         let offset = vec3i(i32(n) % span, (i32(n) / span) % span, i32(n) / (span * span));
-        let q = textureLoad(thermo, clamp(low + offset, vec3i(0), gridDims - 1), 0);
+        let cell = clamp(low + offset, vec3i(0), gridDims - 1);
+        let q = textureLoad(thermo, cell, 0);
         largest = max(largest, q.z + q.w);
     }
 

@@ -3,7 +3,7 @@ import { GUI } from 'lil-gui';
 import * as renderer from '../renderer';
 import * as shaders from '../shaders/shaders';
 import { Stage } from '../stage/stage';
-import { fillTestVolume, TEST_VOLUME } from './test_volume';
+import { fillTestVolume } from './test_volume';
 import blueNoiseUrl from '../assets/blue_noise_64.png';
 
 // Draws the clouds in fields.thermo over the Three.js scene. Each frame, draw() runs gis.render(camera),
@@ -46,7 +46,8 @@ function platformQuality(): string {
 
 // The numbers match the cases in debugMarch() (raymarch.fs.wgsl)
 const DEBUG_VIEWS: Record<string, number> = {
-    off: 0, density: 1, temperature: 2, velocity: 3, vorticity: 4, obstacles: 5, bricks: 6
+    off: 0, density: 1, temperature: 2, velocity: 3, vorticity: 4, obstacles: 5, bricks: 6,
+    'dust density': 7, 'dust velocity': 8, 'vertical rotation': 9, 'swirling strength': 10
 };
 
 // Starting scale and max value for debug views
@@ -55,7 +56,11 @@ const DEBUG_SCALES: Record<string, { value: number, max: number, unit: string }>
     densityBoosted: { value: 0.1, max: 2, unit: 'g/kg' },
     temperature: { value: 1, max: 10, unit: 'K' },          // theta'. The thermal starts at +2 K.
     velocity: { value: 5, max: 50, unit: 'm/s' },
-    vorticity: { value: 0.1, max: 1, unit: '1/s' }
+    vorticity: { value: 0.1, max: 1, unit: '1/s' },
+    'dust density': { value: 0.02, max: 0.2, unit: 'kg/m3' },
+    'dust velocity': { value: 5, max: 50, unit: 'm/s' },
+    'vertical rotation': { value: 0.05, max: 0.5, unit: '1/s' },
+    'swirling strength': { value: 0.03, max: 0.2, unit: '1/s' }
 };
 
 const VOLUME_FORMAT: GPUTextureFormat = "rgba16float";
@@ -112,7 +117,7 @@ export class VolumetricRenderer extends renderer.Renderer {
     // 1/8 of the grid on each side, r32float
     private brickTexture: GPUTexture;
     private brickView: GPUTextureView;
-    private bricksBindGroups: GPUBindGroup[];   // by thermo.index
+    private bricksBindGroups: GPUBindGroup[] = [];
 
     // The raymarch target, recreated when the canvas or resolution scale changes
     private volumeTexture: GPUTexture | undefined;
@@ -123,6 +128,7 @@ export class VolumetricRenderer extends renderer.Renderer {
     private boundDepth: GPUTexture | undefined;
     private boundBlueNoise: GPUTexture | undefined;
     private boundVolume: GPUTexture | undefined;
+    private boundDustVersion = -1;
     private raymarchBindGroups: GPUBindGroup[] = [];    // by 2 * thermo.index + velocity.index
     private compositeBindGroups: GPUBindGroup[] = [];
 
@@ -193,14 +199,6 @@ export class VolumetricRenderer extends renderer.Renderer {
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING
         });
         this.brickView = this.brickTexture.createView();
-        this.bricksBindGroups = [0, 1].map(i => device.createBindGroup({
-            label: `bricks ${i}`,
-            layout: this.bricksPipeline.getBindGroupLayout(0),
-            entries: [
-                { binding: 0, resource: stage.fields.thermo.view(i) },
-                { binding: 1, resource: this.brickView }
-            ]
-        }));
 
         this.temporalParamsBuffer = device.createBuffer({
             label: "temporal params",
@@ -212,7 +210,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         this.blueNoiseView = this.blueNoiseTexture.createView();
         this.loadBlueNoise();
 
-        fillTestVolume(stage.fields);
+        fillTestVolume(stage);
     }
 
     private createBlueNoiseTexture(width: number, height: number): GPUTexture {
@@ -287,6 +285,8 @@ export class VolumetricRenderer extends renderer.Renderer {
         scattering.add(this.multipleScattering, 'eccentricity', 0, 1, 0.01);
 
         const debug = folder.addFolder('Debug');
+        debug.add({ focus: () => this.focusRotation() }, 'focus').name('Look at near-ground rotation');
+        debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Look at rotation under cloud');
         const view = debug.add(this, 'debugView', Object.keys(DEBUG_VIEWS)).name('view');
         const boost = debug.add(this, 'debugBoost').name('boost faint cloud');
         const scale = debug.add(this, 'debugScale', 0, 1);
@@ -304,6 +304,17 @@ export class VolumetricRenderer extends renderer.Renderer {
         view.onChange(showScale);
         boost.onChange(showScale);
         showScale();
+    }
+
+    private focusRotation(underCloud = false) {
+        const storm = this.stage.solver.storm;
+        const target = underCloud ? storm.cloudRotationLocation : storm.rotationLocation;
+        if (!target) return;
+        const camera = this.stage.camera;
+        camera.threeCamera.position.set(target[0] + 2500, 400, target[2] + 2500);
+        camera.yaw = -135;
+        camera.pitch = Math.atan2(200, Math.hypot(2500, 2500)) * 180 / Math.PI;
+        camera.moved = true;
     }
 
     override stop() {
@@ -357,21 +368,32 @@ export class VolumetricRenderer extends renderer.Renderer {
         const color = gis.sceneColorTexture;
         const depth = gis.sceneDepthTexture;
 
-        if (depth !== this.boundDepth || this.blueNoiseTexture !== this.boundBlueNoise) {
+        if (depth !== this.boundDepth || this.blueNoiseTexture !== this.boundBlueNoise
+            || this.boundDustVersion !== fields.dustStorageVersion) {
+            this.bricksBindGroups = Array.from({ length: 2 }, (_, i) => device.createBindGroup({
+                label: `bricks ${i}`,
+                layout: this.bricksPipeline.getBindGroupLayout(0),
+                entries: [
+                    { binding: 0, resource: fields.thermo.view(i) },
+                    { binding: 1, resource: this.brickView }
+                ]
+            }));
             const depthView = depth.createView();
-            this.raymarchBindGroups = [0, 1, 2, 3].map(i => device.createBindGroup({
+            this.raymarchBindGroups = Array.from({ length: 16 }, (_, i) => device.createBindGroup({
                 label: `raymarch ${i}`,
                 layout: this.raymarchPipeline.getBindGroupLayout(0),
                 entries: [
                     { binding: 0, resource: { buffer: camera.uniformsBuffer } },
                     { binding: 1, resource: { buffer: this.paramsBuffer } },
-                    { binding: 2, resource: fields.thermo.view(i >> 1) },
+                    { binding: 2, resource: fields.thermo.view((i >> 1) & 1) },
                     { binding: 3, resource: this.linearSampler },
                     { binding: 4, resource: depthView },
                     { binding: 5, resource: this.brickView },
                     { binding: 6, resource: fields.velocity.view(i & 1) },
                     { binding: 7, resource: fields.obstacleView },
-                    { binding: 8, resource: this.blueNoiseView }
+                    { binding: 8, resource: fields.dustVelocity.view((i >> 2) & 1) },
+                    { binding: 9, resource: fields.dustDensity.view((i >> 3) & 1) },
+                    { binding: 10, resource: this.blueNoiseView }
                 ]
             }));
         }
@@ -411,6 +433,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         this.boundDepth = depth;
         this.boundBlueNoise = this.blueNoiseTexture;
         this.boundVolume = this.volumeTexture;
+        this.boundDustVersion = fields.dustStorageVersion;
     }
 
     // In the layout of RaymarchParams
@@ -457,13 +480,12 @@ export class VolumetricRenderer extends renderer.Renderer {
     }
 
     override draw() {
-        const { gis, camera, solver, fields } = this.stage;
+        const { gis, camera, solver, fields, debris } = this.stage;
         const device = renderer.device;
         const profiler = renderer.profiler;
 
         this.updateVolumeTarget();
         gis.render(camera); // Three submits this itself
-        this.updateBindGroups();
         this.writeParams();
 
         const useTemporal = this.temporal.enabled && this.debugView === 'off';
@@ -474,8 +496,10 @@ export class VolumetricRenderer extends renderer.Renderer {
 
         const encoder = device.createCommandEncoder({ label: "frame" });
 
-        if (TEST_VOLUME === "none")
-            solver.step(encoder);
+        solver.step(encoder);
+        this.updateBindGroups();
+        // Tracers follow the projected dust field; the solver owns momentum exchange.
+        debris.step(encoder, solver.paused ? 0 : solver.dt, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn
         if (this.brickSkipping || this.debugView === 'bricks') {
@@ -502,7 +526,9 @@ export class VolumetricRenderer extends renderer.Renderer {
             }]
         });
         raymarchPass.setPipeline(this.raymarchPipeline);
-        raymarchPass.setBindGroup(0, this.raymarchBindGroups[2 * fields.thermo.index + fields.velocity.index]);
+        const fieldState = fields.velocity.index + 2 * fields.thermo.index
+            + 4 * fields.dustVelocity.index + 8 * fields.dustDensity.index;
+        raymarchPass.setBindGroup(0, this.raymarchBindGroups[fieldState]);
         raymarchPass.draw(3);
         raymarchPass.end();
 
@@ -543,9 +569,11 @@ export class VolumetricRenderer extends renderer.Renderer {
         compositePass.setBindGroup(0, this.compositeBindGroups[shown]);
         compositePass.draw(3);
         compositePass.end();
+        debris.draw(encoder, gis.sceneDepthTexture);
 
         profiler?.resolve(encoder);
         device.queue.submit([encoder.finish()]);
+        solver.storm.observe(fields, this.stage.weather.atmosphereBuffer);
         profiler?.afterSubmit();
     }
 }

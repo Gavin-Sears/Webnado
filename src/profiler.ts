@@ -62,7 +62,7 @@ class SampleBuffer {
 
 export class Profiler {
     // Timed passes per frame, which sizes the query set and its buffers. passWrites() skips any extras.
-    private static readonly maxPasses = 16;
+    private static readonly maxPasses = 32;
     // Limit on staging buffers. resolve() drops a readback when all of them are in flight.
     private static readonly maxReadBuffers = 16;
 
@@ -320,7 +320,12 @@ export class Profiler {
             `frame ${frame.median.toFixed(2)} ms (${(1000 / frame.median).toFixed(0)} fps)`,
             `cpu   ${this.cpuEncode.stats().median.toFixed(3)} ms`
         ];
-        this.passes.forEach((samples, name) => lines.push(`${name} ${samples.stats().median.toFixed(3)} ms`));
+        this.passes.forEach((samples, name) => {
+            const stats = samples.stats();
+            if (stats.count > 0) {
+                lines.push(`${name} ${stats.median.toFixed(3)} ms`);
+            }
+        });
         if (!this.querySet) {
             lines.push("GPU timing unavailable");
         }

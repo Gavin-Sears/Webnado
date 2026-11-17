@@ -7,30 +7,41 @@ export interface DivergenceReport {
     maxBlockedFaceSpeed: number;
     nonFinite: number;
     fluidCells: number;
+    massWeighted: boolean;
 }
 
 export class DivergenceCheck {
     static get bufferSize(): number {
-        const velocityRow = Math.ceil(constants.gridX * 8 / 256) * 256;
+        const texelBytes = constants.velocityFormat === 'rgba32float' ? 16 : 8;
+        const velocityRow = Math.ceil(constants.gridX * texelBytes / 256) * 256;
         const maskRow = Math.ceil(constants.gridX * 4 / 256) * 256;
         const layers = constants.gridY * constants.gridZ;
 
         return (velocityRow + maskRow) * layers + constants.atmosphereSlices * 32;
     }
 
-    private readonly velocityRow = Math.ceil(constants.gridX * 8 / 256) * 256;
+    private get velocityStride() {
+        return !this.periodic && constants.velocityFormat === 'rgba32float' ? 16 : 8;
+    }
+    private get velocityRow() {
+        return Math.ceil(constants.gridX * this.velocityStride / 256) * 256;
+    }
     private readonly maskRow = Math.ceil(constants.gridX * 4 / 256) * 256;
-    private readonly velocityBytes = this.velocityRow * constants.gridY * constants.gridZ;
+    private get velocityBytes() {
+        return this.velocityRow * constants.gridY * constants.gridZ;
+    }
     private readonly maskBytes = this.maskRow * constants.gridY * constants.gridZ;
-    private readonly atmosphereOffset = this.velocityBytes + this.maskBytes;
+    private get atmosphereOffset() {
+        return this.velocityBytes + this.maskBytes;
+    }
 
     private pending: Promise<DivergenceReport> | undefined;
 
-    constructor(private readonly readback: GPUBuffer) {}
+    constructor(private readonly readback: GPUBuffer, private readonly periodic = false) {}
 
     capture(
         encoder: GPUCommandEncoder,
-        fields: Fields,
+        fields: Pick<Fields, 'velocity'>,
         openBits: GPUTexture,
         atmosphere: GPUBuffer
     ): Promise<DivergenceReport> {
@@ -96,22 +107,40 @@ export class DivergenceCheck {
         const { gridX, gridY, gridZ, domainX, domainY, domainZ } = constants;
         const dimensions = [gridX, gridY, gridZ];
         const cellSizes = [domainX / gridX, domainY / gridY, domainZ / gridZ];
+        const readVelocity = (offset: number) => this.velocityStride === 16
+            ? data.getFloat32(offset, true) : halfToFloat(data.getUint16(offset, true));
 
         const bitsAt = (x: number, y: number, z: number) => {
             const offset = this.velocityBytes + this.maskRow * (y + gridY * z) + x * 4;
             return data.getUint32(offset, true);
         };
 
-        const windAt = (y: number, axis: number) => {
+        const sampleAt = (height: number, channel: number) => {
             const slice = Math.max(0, Math.min(constants.atmosphereSlices - 1,
-                (y + 0.5) / gridY * constants.atmosphereSlices - 0.5));
+                height / gridY * constants.atmosphereSlices - 0.5));
             const lower = Math.floor(slice);
             const upper = Math.min(lower + 1, constants.atmosphereSlices - 1);
-            const channel = axis === 0 ? 2 : 3;
             const a = data.getFloat32(this.atmosphereOffset + lower * 32 + channel * 4, true);
             const b = data.getFloat32(this.atmosphereOffset + upper * 32 + channel * 4, true);
 
             return a + (b - a) * (slice - lower);
+        };
+        const windAt = (y: number, axis: number) => sampleAt(y + 0.5, axis === 0 ? 2 : 3);
+        const massWeighted = Boolean(constants.anelasticAir) && !this.periodic;
+        const densityAt = (y: number, axis: number) => massWeighted
+            ? sampleAt(y + (axis === 1 ? 0 : 0.5), 6) : 1;
+
+        const faceOpen = (position: number[], axis: number, positive: boolean) => {
+            const bit = 1 << (axis * 2 + Number(positive));
+            const open = (bitsAt(position[0], position[1], position[2]) & bit) !== 0;
+            if (this.periodic && axis !== 1
+                && position[axis] === (positive ? dimensions[axis] - 1 : 0)) {
+                const opposite = [...position];
+                opposite[axis] = positive ? 0 : dimensions[axis] - 1;
+                const bits = bitsAt(opposite[0], opposite[1], opposite[2]);
+                return open && (bits & 64) !== 0 && (bits & (1 << (axis * 2 + Number(!positive)))) !== 0;
+            }
+            return open;
         };
 
         const faceAt = (x: number, y: number, z: number, axis: number) => {
@@ -123,12 +152,19 @@ export class DivergenceCheck {
                 }
 
                 position[axis]--;
-                const open = bitsAt(position[0], position[1], position[2]) & (1 << (axis * 2 + 1));
+                const open = faceOpen(position, axis, true);
+                if (this.periodic) {
+                    position[axis] = 0;
+                    const offset = this.velocityRow * (position[1] + gridY * position[2])
+                        + position[0] * this.velocityStride + axis * (this.velocityStride / 4);
+                    return open ? readVelocity(offset) : 0;
+                }
                 return open ? windAt(y, axis) : 0;
             }
 
-            const offset = this.velocityRow * (y + gridY * z) + x * 8 + axis * 2;
-            return halfToFloat(data.getUint16(offset, true));
+            const offset = this.velocityRow * (y + gridY * z)
+                + x * this.velocityStride + axis * (this.velocityStride / 4);
+            return readVelocity(offset);
         };
 
         let sumSquares = 0;
@@ -153,14 +189,16 @@ export class DivergenceCheck {
                             nonFinite++;
                         }
 
-                        if ((bits & (1 << (axis * 2))) === 0) {
+                        if (!faceOpen([x, y, z], axis, false)) {
                             maxBlockedFaceSpeed = Math.max(maxBlockedFaceSpeed, Math.abs(lower));
                         }
 
-                        divergence += (upper - lower) / cellSizes[axis];
+                        const upperDensity = densityAt(y + Number(axis === 1), axis);
+                        divergence += (upper * upperDensity - lower * densityAt(y, axis)) / cellSizes[axis];
                     }
 
                     if ((bits & 64) !== 0) {
+                        if (massWeighted) divergence /= sampleAt(y + 0.5, 6);
                         sumSquares += divergence * divergence;
                         maxAbsolute = Math.max(maxAbsolute, Math.abs(divergence));
                         fluidCells++;
@@ -174,13 +212,14 @@ export class DivergenceCheck {
             maxAbsolute,
             maxBlockedFaceSpeed,
             nonFinite,
-            fluidCells
+            fluidCells,
+            massWeighted
         };
     }
 
 }
 
-function halfToFloat(bits: number): number {
+export function halfToFloat(bits: number): number {
     const sign = bits & 0x8000 ? -1 : 1;
     const exponent = (bits >>> 10) & 31;
     const mantissa = bits & 1023;

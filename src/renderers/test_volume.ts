@@ -1,14 +1,20 @@
 import * as renderer from "../renderer";
 import * as shaders from "../shaders/shaders";
-import { Fields } from "../stage/fields";
+import type { Stage } from "../stage/stage";
 
-export const TEST_VOLUME: keyof typeof TEST_VOLUMES | "none" = "none";
 const TEST_VOLUMES = { ellipsoid: 0, fbm: 1 };
+type TestVolume = keyof typeof TEST_VOLUMES | "none";
+const requested = new URLSearchParams(location.search).get("test") ?? "";
+export const TEST_VOLUME: TestVolume = Object.keys(TEST_VOLUMES).includes(requested) ? requested as TestVolume : "none";
 
-export function fillTestVolume(fields: Fields) {
+export function fillTestVolume(stage: Stage) {
     if (TEST_VOLUME === "none") {
         return;
     }
+
+    const { fields, solver, weather } = stage;
+    solver.paused = true;
+    weather.onApplied = () => {};
 
     const device = renderer.device;
     const { gridX, gridY, gridZ } = shaders.constants;

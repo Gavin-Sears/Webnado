@@ -1,6 +1,7 @@
 import * as THREE from "three/webgpu";
 
 import { aspectRatio, canvas, device } from "../renderer";
+import { constants } from "../shaders/shaders";
 
 class CameraUniforms {
     // 3 mat4 + cameraPos + frameIndex = 52 values = 208 bytes
@@ -83,7 +84,8 @@ export class Camera {
         // WebGPU's [0, 1] depth range
         this.threeCamera.coordinateSystem = THREE.WebGPUCoordinateSystem;
         this.threeCamera.updateProjectionMatrix();
-        this.threeCamera.position.set(0, 1800, 12000);
+        this.threeCamera.position.set(0, 1800, 12000).multiplyScalar(constants.domainX / 12800);
+        this.moveSpeed *= constants.domainX / 12800;
 
         // capture, so a GUI element can't hide a keyup
         window.addEventListener('keydown', (event) => this.onKeyDown(event), true);

@@ -3,11 +3,15 @@ import { constants } from "../shaders/shaders";
 
 const fieldUsage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
 
-function createField(label: string, format: GPUTextureFormat): GPUTexture {
+function createField(
+    label: string,
+    format: GPUTextureFormat,
+    size: GPUExtent3D = [constants.gridX, constants.gridY, constants.gridZ]
+): GPUTexture {
     return device.createTexture({
         label,
         dimension: "3d",
-        size: { width: constants.gridX, height: constants.gridY, depthOrArrayLayers: constants.gridZ },
+        size,
         format,
         usage: fieldUsage
     });
@@ -20,8 +24,15 @@ export class PingPong {
     readonly textures: GPUTexture[];    // for debug readback and copies
     private views: GPUTextureView[];
 
-    constructor(label: string, format: GPUTextureFormat) {
-        this.textures = [createField(`${label} 0`, format), createField(`${label} 1`, format)];
+    constructor(
+        label: string,
+        format: GPUTextureFormat,
+        size: GPUExtent3D = [constants.gridX, constants.gridY, constants.gridZ]
+    ) {
+        this.textures = [
+            createField(`${label} 0`, format, size),
+            createField(`${label} 1`, format, size)
+        ];
         this.views = this.textures.map(texture => texture.createView());
     }
 
@@ -45,12 +56,41 @@ export class PingPong {
 // CHECKITOUT: the fields shared between teammates, with layouts in common.wgsl.
 // These formats work as storage textures on every device, unlike r8uint or rg16float.
 export class Fields {
-    velocity = new PingPong("velocity", "rgba16float");
-    thermo = new PingPong("thermo", "rgba16float");
+    velocity = new PingPong("velocity", constants.velocityFormat);
+    dustVelocity: PingPong;
+    dustDensity: PingPong;
+    dustStorageVersion = 0;
+    private dustAllocated: boolean;
+    thermo = new PingPong("thermo", constants.scalarFormat);
+    // Turbulence channels are k (m²/s²), viscosity and mixing (m²/s), unused.
+    turbulence = new PingPong("turbulence", constants.scalarFormat);
+    vorticity = new PingPong("transported vorticity", "rgba16float");
+    readonly windForcing = createField("dust feedback acceleration", "rgba16float");
+    readonly windForcingView = this.windForcing.createView();
 
     private obstacle = createField("obstacle", "r32uint");
     obstacleView = this.obstacle.createView();
     obstacleVersion = 0;
+    hasObstacles = false;
+
+    constructor(withDust = true) {
+        this.dustAllocated = withDust;
+        const size = withDust ? undefined : [1, 1, 1];
+        this.dustVelocity = new PingPong('dust velocity', 'rgba16float', size);
+        this.dustDensity = new PingPong('dust concentration (kg/m3)', 'r32float', size);
+    }
+
+    enableDustFields() {
+        if (this.dustAllocated) {
+            return;
+        }
+        this.dustVelocity.textures.forEach(texture => texture.destroy());
+        this.dustDensity.textures.forEach(texture => texture.destroy());
+        this.dustVelocity = new PingPong('dust velocity', 'rgba16float');
+        this.dustDensity = new PingPong('dust concentration (kg/m3)', 'r32float');
+        this.dustAllocated = true;
+        this.dustStorageVersion++;
+    }
 
     // The idea behind the obstacles is that we will have an entry for
     // each spatial grid cell. In each cell, we will denote what material
@@ -62,6 +102,7 @@ export class Fields {
     // k = Math.floor(index / (gridX * gridY));
     // Loading the obstacle array will be the task of the GIS person.
     setObstacles(materials: Uint8Array) {
+        this.hasObstacles = materials.some(material => material !== 0);
         const { gridX, gridY, gridZ } = constants;
         device.queue.writeTexture(
             { texture: this.obstacle },

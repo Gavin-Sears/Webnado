@@ -1,42 +1,131 @@
 import { GUI } from "lil-gui";
 
 import { device } from "../renderer";
-import { constants } from "../shaders/shaders";
+import { constants, domainName } from "../shaders/shaders";
 import type { Site } from "../stage/stage";
+import { cm1Atmosphere } from './cm1_sounding';
+import { SpatialWeather } from './spatial_weather';
+import elRenoSounding from './cases/elreno-2011.txt?raw';
+import elRenoMetadata from './cases/elreno-2011.source.json';
+import {
+    atmosphereColumn,
+    hourlyNames,
+    pointsFromHour,
+    syntheticColumn,
+    VALUES_PER_SLICE,
+    type OpenMeteoForecast
+} from "./sounding";
 
-const VALUES_PER_SLICE = 8;
-
-// TODO:
-// Input: a Site and fetched data
-// Output: atmosphereBuffer for the solver, as array<AtmosphereSample> (common.wgsl).
-//   constants.atmosphereSlices slices, evenly spaced vertical slices
-//   Per slice: theta (K), qv (g/kg), wind x (m/s), wind z (m/s), pressure (Pa), temperature (K), density (kg/m^3)
+// Loads a sounding into atmosphereBuffer for the solver, as array<AtmosphereSample> (common.wgsl).
+// constants.atmosphereSlices slices, evenly spaced. Each slice is:
+//   theta (K), qv (g/kg), wind x (m/s), wind z (m/s), pressure (Pa), temperature (K), density (kg/m^3)
 //
-// Source: Open-Meteo (free and doesn't require a key), serving NOAA's GFS and HRRR models. Docs: https://open-meteo.com/en/docs
+// Source: Open-Meteo, no key, serving NOAA's GFS and HRRR. https://open-meteo.com/en/docs
 //   Live:  https://api.open-meteo.com/v1/gfs with models=ncep_hrrr_conus
 //   Past:  https://historical-forecast-api.open-meteo.com/v1/forecast with start_date and end_date
-//   Request wind_speed_unit=ms and hourly temperature_, relative_humidity_, wind_speed_, wind_direction_ and
-//   geopotential_height_ + {1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400}hPa, plus temperature_2m,
-//   relative_humidity_2m, surface_pressure, wind_speed_10m and wind_direction_10m.
-//   Responses are in UTC (SO MAKE SURE TO CONVERT TO LOCAL TIME FOR DISPLAY!), °C and hPa, and include the ground's elevation (m).
+// The request asks for wind_speed_unit=ms and hourly temperature, relative humidity, wind speed,
+// wind direction, and geopotential height at 1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400 hPa,
+// plus temperature_2m, relative_humidity_2m, surface_pressure, wind_speed_10m, and wind_direction_10m.
+// Responses are UTC, °C, and hPa, and include the station elevation in meters.
+// The GUI hour stays UTC. timezone=auto put a May afternoon in Iowa on standard time, an hour off daylight time.
 export class WeatherData {
     atmosphereBuffer: GPUBuffer;
+    date = "2024-05-21";
+    hour = 21;
+    status = "Standard atmosphere, until a sounding loads.";
+    scenario: 'weather' | 'elreno' | 'hrrr' = 'weather';
+    spatial: SpatialWeather | undefined;
+    readonly spatialFlat = new URLSearchParams(location.search).get('terrain') === 'flat';
+    validTime = '';
+    version = 0;
+
+    private loading = false;
+    private request: AbortController | undefined;
+    private spatialStart = 0;
+    private spatialColumn: Float32Array | undefined;
+    private refreshStatus = () => {};
+    // Stage points this at the solver. A new column clears the cloud left by the previous one.
+    onApplied = () => {};
 
     constructor(readonly site: Site) {
         this.atmosphereBuffer = device.createBuffer({
             label: "atmosphere",
-            size: constants.atmosphereSlices * VALUES_PER_SLICE * 4,
+            size: constants.spatialWeather ? 96 * 1024 * 1024 : constants.atmosphereSlices * VALUES_PER_SLICE * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
         });
         this.setAtmosphere(this.placeholderAtmosphere());
     }
 
-    setAtmosphere(values: Float32Array) {
-        device.queue.writeBuffer(this.atmosphereBuffer, 0, values);
+    async loadSpatial(url: string) {
+        const spatial = await SpatialWeather.load(url);
+        const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4;
+        if (offset + spatial.values.byteLength > this.atmosphereBuffer.size) {
+            throw new Error('The extracted weather exceeds this experiment’s GPU input budget.');
+        }
+        const column = spatial.referenceColumn(constants.atmosphereSlices,
+            constants.domainY, constants.domainX, constants.domainZ);
+        const corrections = spatial.balanceBoundaryFlux(column,
+            [constants.gridX, constants.gridY, constants.gridZ],
+            [constants.domainX, constants.domainY, constants.domainZ], !!constants.anelasticAir, !this.spatialFlat);
+        console.log('Weather boundary mass correction (m/s, outward normal)', corrections);
+        this.setAtmosphere(column);
+        device.queue.writeBuffer(this.atmosphereBuffer, offset, spatial.values);
+        this.spatial = spatial;
+        this.spatialColumn = column;
+        this.spatialStart = Date.parse(spatial.manifest.sources[0].initializationUtc)
+            + spatial.manifest.forecastHours[0] * 3600000;
+        this.writeSpatialTime(0);
+        this.scenario = 'hrrr';
+        Object.assign(this.site, spatial.manifest.center);
+        this.status = 'HRRR spatial experiment · no synthetic storm trigger · warm-rain physics only';
+        this.refreshStatus();
     }
 
-    // TODO: Placeholder for weather data. This is just some air that cools as it gets higher. 
-    // Replace this with the fetched data.
+    writeSpatialTime(seconds: number) {
+        const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4 + 64;
+        device.queue.writeBuffer(this.atmosphereBuffer, offset, new Float32Array([seconds]));
+        this.validTime = new Date(this.spatialStart + seconds * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    }
+
+    moveSpatialWindow(east: number, north: number) {
+        const spatial = this.spatial!;
+        if (spatial.windowEast === east && spatial.windowNorth === north) return true;
+        const previous = [spatial.windowEast, spatial.windowNorth];
+        spatial.windowEast = east;
+        spatial.windowNorth = north;
+        for (const x of [-constants.domainX / 2, constants.domainX / 2]) {
+            for (const z of [-constants.domainZ / 2, constants.domainZ / 2]) {
+                const [i, j] = spatial.gridCoordinate(x, z);
+                if (i < 0 || j < 0 || i > spatial.width - 1 || j > spatial.depth - 1) {
+                    [spatial.windowEast, spatial.windowNorth] = previous;
+                    return false;
+                }
+            }
+        }
+        spatial.balanceBoundaryFlux(this.spatialColumn!,
+            [constants.gridX, constants.gridY, constants.gridZ],
+            [constants.domainX, constants.domainY, constants.domainZ], !!constants.anelasticAir, !this.spatialFlat);
+        const offset = constants.atmosphereSlices * VALUES_PER_SLICE * 4;
+        spatial.values.set([east, north], 24);
+        device.queue.writeBuffer(this.atmosphereBuffer, offset + 80, spatial.values.subarray(20, 24));
+        device.queue.writeBuffer(this.atmosphereBuffer, offset + 96, new Float32Array([east, north]));
+        return true;
+    }
+
+    setAtmosphere(values: Float32Array, status?: string) {
+        this.version++;
+        device.queue.writeBuffer(this.atmosphereBuffer, 0, values);
+        if (status !== undefined) {
+            this.request?.abort();
+            this.request = undefined;
+            this.loading = false;
+            this.status = status;
+            this.refreshStatus();
+        }
+    }
+
+    // Fallback until load() succeeds, and what a failed fetch leaves in place.
+    // Air cools with height. The numbers are the same slice layout as a real sounding.
     private placeholderAtmosphere(): Float32Array {
         const values = new Float32Array(constants.atmosphereSlices * VALUES_PER_SLICE);
         for (let i = 0; i < constants.atmosphereSlices; ++i) {
@@ -44,18 +133,166 @@ export class WeatherData {
             const temperature = 295 - 0.0065 * height;
             const pressure = 100000 * Math.pow(temperature / 295, 5.256);
             const offset = i * VALUES_PER_SLICE;
-            values[offset] = temperature * Math.pow(100000 / pressure, 0.2857);     // theta
-            values[offset + 1] = 10 * Math.exp(-height / 2500);                     // qv
-            values[offset + 2] = 0;                                                 // wind x
-            values[offset + 3] = 0;                                                 // wind z
-            values[offset + 4] = pressure;
-            values[offset + 5] = temperature;
-            values[offset + 6] = pressure / (287.05 * temperature);                 // density
+            values[offset] = temperature * Math.pow(100000 / pressure, 0.2857); // theta (K)
+            values[offset + 1] = 10 * Math.exp(-height / 2500);                  // qv (g/kg)
+            values[offset + 2] = 0;                                              // wind x (m/s, toward east)
+            values[offset + 3] = 0;                                              // wind z (m/s, toward south)
+            values[offset + 4] = pressure;                                       // Pa
+            values[offset + 5] = temperature;                                    // K
+            values[offset + 6] = pressure / (287.05 * temperature);              // density (kg/m^3)
         }
         return values;
     }
 
-    // TODO: Make weather loading GUI (location, date, hour, load button, etc.)
-    buildGui(_gui: GUI) {
+    // Location, date, UTC hour, and load. The dry buttons are a fixed column, so the wind can be seen on its own.
+    buildGui(gui: GUI) {
+        const folder = gui.addFolder("Weather");
+        if (this.spatial) {
+            const description = {
+                source: this.spatial.manifest.forecastHours[0] ? 'HRRR model forecast' : 'HRRR model analysis',
+                physics: 'Warm rain; ice not evolved',
+                trigger: 'No synthetic storm trigger',
+                terrain: this.spatialFlat ? 'Flat comparison domain' : 'Voxelized HRRR terrain'
+            };
+            folder.add(description, 'source').name('Source').disable();
+            folder.add(description, 'physics').name('Physics').disable();
+            folder.add(description, 'trigger').name('Initiation').disable();
+            folder.add(description, 'terrain').name('Geometry').disable();
+            folder.add(this.spatial.manifest.sources[0], 'initializationUtc').name('Model initialization').disable();
+            folder.add(this, 'validTime').name('Weather time').listen().disable();
+            folder.add(this.spatial.manifest, 'groundMsl').name('Box floor MSL (m)').disable();
+            return;
+        }
+        folder.add(this.site, "latitude", -90, 90, 0.01).name("Latitude");
+        folder.add(this.site, "longitude", -180, 180, 0.01).name("Longitude");
+        folder.add(this, "date").name("Date");
+        folder.add(this, "hour", 0, 23, 1).name("Hour (UTC)");
+        folder.add(this, "load").name("Load sounding");
+        folder.add(this, "useDryCalm").name("Dry, no wind");
+        folder.add(this, "useEastWind").name("Dry, toward east");
+        folder.add(this, "useWestWind").name("Dry, toward west");
+        const status = folder.add(this, "status").name("Status").disable();
+        this.refreshStatus = () => status.updateDisplay();
+    }
+
+    // Replace the column and clear the box. Real hours stay humid, so cloud can grow again afterwards.
+    async load(): Promise<void> {
+        if (this.loading) {
+            return;
+        }
+
+        const date = this.date.trim();
+        const hour = Math.min(23, Math.max(0, Math.round(this.hour)));
+        this.hour = hour;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            this.status = "Date must be YYYY-MM-DD.";
+            this.refreshStatus();
+            return;
+        }
+
+        this.loading = true;
+        const request = new AbortController();
+        this.request = request;
+        this.status = "Loading the sounding…";
+        this.refreshStatus();
+
+        try {
+            const response = await fetch(this.forecastUrl(date), { signal: request.signal });
+            if (!response.ok) {
+                throw new Error(`Open-Meteo returned HTTP ${response.status}.`);
+            }
+
+            const forecast = await response.json() as OpenMeteoForecast;
+            if (this.request !== request) {
+                return;
+            }
+            const points = pointsFromHour(forecast, date, hour);
+            if (points.length < 2) {
+                throw new Error(`No sounding for ${date} ${String(hour).padStart(2, "0")}:00 UTC.`);
+            }
+
+            const ground = points[0];
+            const celsius = ground.temperature - 273.15;
+            const speed = Math.hypot(ground.windX, ground.windZ);
+            this.applyColumn(
+                atmosphereColumn(points, constants.atmosphereSlices, constants.domainY),
+                `${date} ${String(hour).padStart(2, "0")}:00 UTC · ${celsius.toFixed(1)} °C · vapor ${ground.vapor.toFixed(1)} g/kg · wind ${speed.toFixed(1)} m/s`
+            );
+        } catch (error) {
+            if (this.request === request) {
+                this.status = error instanceof Error ? error.message : "The sounding could not be loaded.";
+            }
+        } finally {
+            if (this.request === request) {
+                this.request = undefined;
+                this.loading = false;
+                this.refreshStatus();
+            }
+        }
+    }
+
+    // One gram of vapor per kilogram of air. That stays below saturation, so the box should stay clear.
+    useDryCalm() {
+        this.applySynthetic(1, 0, 0, "Synthetic · dry · no wind");
+    }
+
+    useElReno() {
+        const column = cm1Atmosphere(elRenoSounding, constants.atmosphereSlices, constants.domainY);
+        const frame = new URLSearchParams(location.search).get('frame')
+            ?? (domainName === 'storm-focus' ? 'bunkers' : 'reference');
+        const motion = frame === 'bunkers'
+            ? elRenoMetadata.estimated_storm_motion : elRenoMetadata.simulation_frame;
+        for (let offset = 0; offset < column.length; offset += VALUES_PER_SLICE) {
+            column[offset + 2] -= motion.eastward_translation_m_per_s;
+            column[offset + 3] += motion.northward_translation_m_per_s;
+        }
+        this.applyColumn(
+            column,
+            `El Reno 24 May 2011 · ${frame} storm-relative frame`,
+            'elreno'
+        );
+    }
+
+    // Air moves toward +X. The ground turns part of that wind up and down.
+    useEastWind() {
+        this.applySynthetic(1, 20, 0, "Synthetic · dry · 20 m/s toward the east");
+    }
+
+    useWestWind() {
+        this.applySynthetic(1, -20, 0, "Synthetic · dry · 20 m/s toward the west");
+    }
+
+    private applySynthetic(vapor: number, windX: number, windZ: number, status: string) {
+        this.applyColumn(
+            syntheticColumn(constants.atmosphereSlices, constants.domainY, vapor, windX, windZ),
+            status
+        );
+    }
+
+    private applyColumn(values: Float32Array, status: string, scenario: 'weather' | 'elreno' = 'weather') {
+        this.setAtmosphere(values, status);
+        this.scenario = scenario;
+        this.onApplied();
+    }
+
+    // Historical archive for a finished day, live HRRR otherwise. wind_speed_unit=ms on both.
+    private forecastUrl(date: string): string {
+        const today = new Date().toISOString().slice(0, 10);
+        const params = new URLSearchParams({
+            latitude: String(this.site.latitude),
+            longitude: String(this.site.longitude),
+            hourly: hourlyNames().join(","),
+            wind_speed_unit: "ms",
+            timezone: "UTC"
+        });
+
+        if (date >= today) {
+            params.set("models", "ncep_hrrr_conus");
+            return `https://api.open-meteo.com/v1/gfs?${params}`;
+        }
+
+        params.set("start_date", date);
+        params.set("end_date", date);
+        return `https://historical-forecast-api.open-meteo.com/v1/forecast?${params}`;
     }
 }

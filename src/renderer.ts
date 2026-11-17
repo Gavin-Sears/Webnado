@@ -1,5 +1,6 @@
 import { Profiler } from './profiler';
 import { Stage } from './stage/stage';
+import { constants } from './shaders/shaders';
 
 export var canvas: HTMLCanvasElement;
 export var canvasFormat: GPUTextureFormat;
@@ -89,8 +90,18 @@ export async function initWebGPU() {
     if (profiling) {
         wantedFeatures.push("timestamp-query");
     }
+    // Texture initialization can need a staging buffer as large as an RGBA32 volume.
+    const volumeBytes = constants.gridX * constants.gridY * constants.gridZ * 16;
+    const requiredLimits: Record<string, number> = {};
+    if (volumeBytes > 256 * 1024 * 1024) {
+        if (volumeBytes > adapter.limits.maxBufferSize) {
+            throw new Error('This grid exceeds the GPU buffer limit. Choose a lower resolution.');
+        }
+        requiredLimits.maxBufferSize = volumeBytes;
+    }
     device = await adapter.requestDevice({
-        requiredFeatures: wantedFeatures.filter(feature => adapter.features.has(feature))
+        requiredFeatures: wantedFeatures.filter(feature => adapter.features.has(feature)),
+        requiredLimits
     });
 
     device.addEventListener("uncapturederror", reportGpuError);
