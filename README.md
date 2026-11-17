@@ -47,3 +47,4 @@ For accurate numbers, launch Chrome without vsync or a frame rate limit. Develop
 - [WebGPU spec](https://www.w3.org/TR/webgpu/) · [WGSL spec](https://www.w3.org/TR/WGSL/)
 - [Three.js](https://threejs.org/docs/) · [3DTilesRendererJS](https://github.com/NASA-AMMOS/3DTilesRendererJS) · [Cesium ion](https://cesium.com/learn/ion/)
 - Weather data by [Open-Meteo](https://open-meteo.com/), licensed under [CC BY 4.0](https://open-meteo.com/en/licence)
+- Blue noise texture by Christoph Peters, CC0. To learn more about blue noise, check out his excellent blog post [here](https://momentsingraphics.de/BlueNoise.html)
