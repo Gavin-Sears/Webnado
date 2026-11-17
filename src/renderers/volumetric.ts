@@ -273,8 +273,8 @@ export class VolumetricRenderer extends renderer.Renderer {
         scattering.add(this.multipleScattering, 'eccentricity', 0, 1, 0.01);
 
         const debug = (inspection ?? folder).addFolder('Diagnostic view');
-        debug.add({ focus: () => this.focusRotation() }, 'focus').name('Look at near-ground rotation');
-        debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Look at rotation under cloud');
+        debug.add({ focus: () => this.focusRotation() }, 'focus').name('Focus rotation');
+        debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Focus under cloud');
         const view = debug.add(this, 'debugView', {
             'Cloud rendering': 'off',
             'Cloud water': 'density',

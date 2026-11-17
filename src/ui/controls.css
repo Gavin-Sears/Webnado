@@ -44,15 +44,15 @@
 }
 
 .webnado-controls.lil-root > .lil-title {
-    height: 57px;
+    height: 36px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 0 18px;
-    font-size: 17px;
+    padding: 0 14px;
+    font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.1em;
     border-bottom: 1px solid var(--line);
     background: #080c10;
 }
@@ -72,112 +72,6 @@
     content: '+';
 }
 
-.mission-wordmark {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.mission-wordmark::before {
-    content: '';
-    width: 7px;
-    height: 20px;
-    border-left: 2px solid var(--accent);
-    border-right: 2px solid var(--accent);
-    transform: skew(-18deg);
-}
-
-.mission-subtitle {
-    font: 8px/1.5 var(--font-family-mono);
-    letter-spacing: 0.1em;
-    color: var(--muted);
-    max-width: 80px;
-    text-align: left;
-}
-
-.mission-overview {
-    flex-shrink: 0;
-    padding: 16px 18px 0;
-}
-
-.mission-topline {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.mission-clock {
-    font: 17px var(--font-family-mono);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.04em;
-}
-
-.mission-status {
-    color: var(--accent);
-    font: 9px var(--font-family-mono);
-    letter-spacing: 0.12em;
-}
-
-.mission-status::before {
-    content: '';
-    display: inline-block;
-    width: 5px;
-    height: 5px;
-    background: currentColor;
-    margin-right: 7px;
-    vertical-align: 1px;
-}
-
-.mission-overview[data-state=paused] .mission-status {
-    color: #a1acb5;
-}
-
-.mission-overview[data-state=sync] .mission-status {
-    color: #ddbd8d;
-}
-
-.mission-context {
-    margin-top: 8px;
-    font: 9px/1.5 var(--font-family-mono);
-    letter-spacing: 0.04em;
-    color: var(--muted);
-}
-
-.mission-metrics {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    margin-top: 16px;
-    border-top: 1px solid var(--line);
-}
-
-.mission-metrics > div {
-    padding: 12px 10px 14px 0;
-}
-
-.mission-metrics > div + div {
-    padding-left: 14px;
-    border-left: 1px solid var(--line);
-}
-
-.metric-label {
-    display: block;
-    margin-bottom: 8px;
-    font: 9px var(--font-family-mono);
-    letter-spacing: 0.08em;
-    color: var(--muted);
-}
-
-.metric-value {
-    font: 21px var(--font-family-mono);
-    font-variant-numeric: tabular-nums;
-}
-
-.metric-unit {
-    margin-left: 4px;
-    font: 10px var(--font-family-mono);
-    color: var(--muted);
-}
-
 .control-tabs {
     display: flex;
     flex-shrink: 0;
@@ -188,7 +82,7 @@
 .webnado-controls .control-tabs button {
     flex: 1;
     position: relative;
-    padding: 13px 8px;
+    padding: 10px 8px;
     border: 0;
     background: transparent;
     color: var(--muted);
@@ -200,13 +94,6 @@
 
 .webnado-controls .control-tabs button + button {
     border-left: 1px solid var(--line);
-}
-
-.webnado-controls .control-tabs button::before {
-    content: attr(data-index);
-    font-size: 8px;
-    margin-right: 7px;
-    color: #61717d;
 }
 
 .webnado-controls .control-tabs button[aria-pressed=true] {
@@ -239,8 +126,8 @@
 }
 
 .webnado-controls .lil-gui .lil-title {
-    padding-inline: 16px;
-    height: 39px;
+    padding-inline: 12px;
+    height: 32px;
     border-top: 1px solid var(--line);
 }
 
@@ -257,7 +144,7 @@
 
 .webnado-controls .lil-controller {
     margin: 0;
-    padding: 7px 18px;
+    padding: 6px 14px;
     gap: 10px;
 }
 
@@ -426,39 +313,6 @@
     font: 10px/1.6 var(--font-family-mono);
 }
 
-.mission-footer {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 18px;
-    border-top: 1px solid var(--line);
-    background: #080c10;
-    color: var(--muted);
-    font: 8px var(--font-family-mono);
-    letter-spacing: 0.07em;
-}
-
-.mission-footer > span {
-    white-space: nowrap;
-}
-
-.webnado-controls .mission-footer button {
-    width: auto;
-    flex-shrink: 0;
-    color: #bbd0dc;
-    font: inherit;
-    letter-spacing: inherit;
-    padding: 5px 0 5px 10px;
-    background: transparent;
-    border: 0;
-    cursor: pointer;
-}
-
-.webnado-controls .mission-footer button[aria-pressed=true] {
-    color: var(--accent);
-}
-
 .webnado-controls button:focus-visible,
 .webnado-controls input:focus-visible,
 .webnado-controls select:focus-visible {
@@ -466,9 +320,7 @@
     outline-offset: -1px;
 }
 
-.webnado-controls.lil-closed .mission-overview,
-.webnado-controls.lil-closed .control-tabs,
-.webnado-controls.lil-closed .mission-footer {
+.webnado-controls.lil-closed .control-tabs {
     display: none;
 }
 
@@ -494,4 +346,8 @@
     .webnado-controls .lil-controller input {
         font-size: 16px;
     }
+}
+
+.webnado-controls .control-help:empty {
+    display: none;
 }

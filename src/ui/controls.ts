@@ -5,21 +5,12 @@ import { constants, domainName, domains, resolutionName, resolutions, tkeModelNa
 import { buildWeatherSelection } from '../weather/weather_selection';
 import { buildSourceView } from '../weather/source_view';
 import { help } from './help';
-import { buildTelemetry } from './telemetry';
 import './controls.css';
 
 export function buildControls(stage: Stage, renderer: VolumetricRenderer) {
-    const gui = new GUI({ title: 'WEBNADO', width: 400 });
+    const gui = new GUI({ title: 'Webnado', width: 320 });
     gui.domElement.classList.add('webnado-controls');
-    const wordmark = document.createElement('span');
-    wordmark.className = 'mission-wordmark';
-    wordmark.textContent = 'WEBNADO';
-    const subtitle = document.createElement('span');
-    subtitle.className = 'mission-subtitle';
-    subtitle.textContent = 'ATMOSPHERIC SYSTEMS';
-    gui.$title.replaceChildren(wordmark, subtitle);
     gui.$title.setAttribute('aria-label', 'Toggle Webnado control panel');
-    buildTelemetry(gui, stage);
     const tabs = document.createElement('nav');
     tabs.className = 'control-tabs';
     tabs.setAttribute('aria-label', 'Control workspace');
@@ -33,7 +24,6 @@ export function buildControls(stage: Stage, renderer: VolumetricRenderer) {
         folder.$title.hidden = true;
         const button = document.createElement('button');
         button.textContent = name;
-        button.dataset.index = String(tabs.children.length + 1).padStart(2, '0');
         button.setAttribute('aria-label', name);
         button.addEventListener('click', () => {
             for (const [label, workspace] of Object.entries(workspaces)) {
@@ -47,27 +37,21 @@ export function buildControls(stage: Stage, renderer: VolumetricRenderer) {
     }
     (tabs.firstElementChild as HTMLButtonElement).click();
 
-    help(run, `Current mode: ${stage.weather.spatial ? '3D HRRR weather' : stage.weather.scenario === 'elreno' ? 'El Reno sounding experiment' : 'local sounding / sandbox'}.`);
-    help(run, 'Choose a weather case, then let the storm evolve. Use Inspect to see airflow and rotation; Advanced contains the full controls.');
     void buildWeatherSelection(run, stage.weather);
-    const playback = run.addFolder('Playback');
-    playback.add(stage.solver, 'paused').name('Pause simulation').listen();
-    playback.add(stage.solver, 'reset').name('Restart current simulation');
-    if (stage.solver.storm.enabled) {
-        playback.add(stage.solver.storm, 'elapsed').name('Simulation time (s)').listen().disable();
-        help(playback, 'Weather cases start from the beginning, not a saved vortex. The measured Iowa and Kansas runs evolved for about 4,300–4,800 simulation seconds.');
-    } else {
-        playback.add(stage.solver, 'addThermal').name('Add warm thermal');
-        playback.add(stage.solver, 'startShearExperiment').name('Start shear experiment');
-        help(playback, 'A warm thermal adds a small warm, moist bubble. A sounding alone may not produce visible cloud.');
-    }
+    run.add(stage.solver, 'paused').name('Pause').listen();
+    run.add(stage.solver, 'reset').name('Reset');
 
+    const hints = { visible: false };
+    advanced.add(hints, 'visible').name('Show explanations').onChange((visible: boolean) => {
+        gui.domElement.classList.toggle('show-guidance', visible);
+    });
     help(advanced, 'These controls change the experiment. Loading a weather case restores its baseline settings.');
     help(inspect, 'Colors show a diagnostic field, not a photograph of a tornado. Change the scale if a view becomes saturated.');
     renderer.buildGui(advanced, inspect);
     buildSourceView(inspect, stage.weather, () => stage.solver.storm.elapsed);
     if (stage.solver.storm.enabled) {
         const measurements = inspect.addFolder('Storm measurements');
+        measurements.add(stage.solver.storm, 'elapsed').name('Time (s)').listen().disable();
         measurements.add(stage.solver.storm, 'rotatingWind').name('Ring wind (m/s)').listen().disable();
         measurements.add(stage.solver.storm, 'rotatingWindHeight').name('Ring height (m)').listen().disable();
         measurements.add(stage.solver.storm, 'groundSwirl').name('Swirling strength (1/s)').listen().disable();
@@ -75,7 +59,7 @@ export function buildControls(stage: Stage, renderer: VolumetricRenderer) {
         measurements.close();
     }
     const profile = { enabled: new URLSearchParams(location.search).has('profile') };
-    inspect.add(profile, 'enabled').name('GPU timing overlay (reload)').onChange((enabled: boolean) => {
+    inspect.add(profile, 'enabled').name('GPU timings (reload)').onChange((enabled: boolean) => {
         const url = new URL(location.href);
         if (enabled) url.searchParams.set('profile', '');
         else url.searchParams.delete('profile');

@@ -18,7 +18,8 @@ export function experimentUrl(mode: 'hrrr' | 'elreno' | 'sounding', resolution: 
 }
 
 export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
-    const folder = gui.addFolder('Choose an experiment');
+    const folder = gui.addFolder('Experiment');
+    folder.$title.hidden = true;
     const state = { case: '', resolution: 'medium', status: 'Loading prepared weather…' };
     const description = help(folder, 'Prepared 3D weather contains a modeled storm. A sounding is one vertical profile, shared across the domain.');
     const choices: Record<string, string> = {};
@@ -33,12 +34,12 @@ export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
             choices[item.name] = manifest;
             descriptions.set(manifest, `${item.name}. NOAA HRRR 3D model weather; no added thermal or prescribed updraft. Rotation may develop, but a ground-reaching tornado is not guaranteed.`);
         }
-        state.status = cases.length ? 'Prepared weather ready' : 'No prepared weather on this deployment';
+        state.status = cases.length ? '' : 'No prepared cases.';
     } catch {
-        state.status = 'Prepared weather unavailable; sounding experiments still work';
+        state.status = 'Prepared cases unavailable.';
     }
     choices['El Reno · May 24, 2011 (triggered)'] = 'elreno';
-    choices['Custom sounding / local sandbox'] = 'sounding';
+    choices['Sounding'] = 'sounding';
     descriptions.set('elreno', 'Idealized El Reno sounding experiment. A nonrotating updraft starts the storm for 20 simulated minutes, then fades. This is not weather-only replay.');
     descriptions.set('sounding', 'Explore any location with a vertical sounding from Open-Meteo, or try the local thermal and shear experiments. This does not import an existing 3D storm.');
     const current = new URLSearchParams(location.search);
@@ -52,19 +53,19 @@ export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
     const updateDescription = () => {
         description.textContent = descriptions.get(state.case) ?? 'Custom 3D HRRR weather. The outcome depends on the supplied weather and grid.';
     };
-    folder.add(state, 'case', choices).name('Experiment').onChange(updateDescription);
-    folder.add(state, 'resolution', { 'Preview · medium grid': 'medium', 'Research · high grid': 'high' }).name('Simulation quality');
-    help(folder, 'Research uses the grid from our Iowa and Kansas checks and needs more GPU memory. Preview is cheaper; it may evolve differently. Loading restarts the page.');
+    folder.add(state, 'case', choices).name('Case').onChange(updateDescription);
+    folder.add(state, 'resolution', { Medium: 'medium', High: 'high' }).name('Simulation grid');
+    help(folder, 'High matches the Iowa and Kansas research grid. Medium is cheaper and may evolve differently. Loading restarts the page.');
     const launch = folder.add({ load: () => {
         const mode = state.case === 'elreno' || state.case === 'sounding' ? state.case : 'hrrr';
         location.assign(experimentUrl(mode, state.resolution, state.case).href);
-    } }, 'load').name('Load selected experiment');
+    } }, 'load').name('Load');
     launch.domElement.classList.add('control-primary');
     const status = help(folder, state.status);
     status.setAttribute('role', 'status');
     updateDescription();
 
-    const custom = gui.addFolder('Another location');
+    const custom = gui.addFolder('Location');
     help(custom, 'Soundings work for other locations today. A full 3D HRRR storm needs prepared data or a connected weather service; choosing a tornado location alone does not recreate its tornado.');
     if (weather.spatial || weather.scenario === 'elreno') {
         custom.add({ open: () => location.assign(experimentUrl('sounding', 'medium').href) }, 'open').name('Open custom sounding mode');
@@ -80,7 +81,7 @@ export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
 
     const hrrr = custom.addFolder('Full 3D weather');
     const remote = { manifest: '' };
-    const weatherStatus = help(hrrr, 'Load a hosted HRRR manifest, or use the weather service below if connected.');
+    const weatherStatus = help(hrrr, '');
     weatherStatus.setAttribute('role', 'status');
     hrrr.add(remote, 'manifest').name('Manifest URL');
     hrrr.add({ load: () => {
