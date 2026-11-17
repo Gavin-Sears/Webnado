@@ -64,6 +64,32 @@ class WeatherChecks(unittest.TestCase):
                     self.assertEqual(job['status'],'ready')
                     with urlopen(base+'/'+job['manifest']) as response:self.assertIn(b'state.bin',response.read())
                     with self.assertRaises(HTTPError):urlopen(base+'/data/../../requirements.txt')
+                    def prepared_fixture(settings, output, progress):
+                        progress('Preparing test fixture')
+                        case=Path(output)/identifier(settings)
+                        case.mkdir(exist_ok=True)
+                        (case/'manifest.json').write_text('{"state":"state.bin"}')
+                        (case/'state.bin').write_bytes(b'worker fixture')
+                        return case
+                    def submit_and_wait(settings):
+                        request=Request(base+'/jobs',data=json.dumps(settings).encode(),headers={'Content-Type':'application/json'})
+                        with urlopen(request) as response:job=json.load(response)
+                        for _ in range(100):
+                            with urlopen(base+'/jobs/'+job['id']) as response:job=json.load(response)
+                            if job['status'] in ['ready','failed']:return job
+                            time.sleep(.01)
+                        self.fail('Weather job did not finish')
+                    with patch.object(service,'prepare',prepared_fixture):
+                        job=submit_and_wait(self.settings()|dict(hour=17))
+                        self.assertEqual(job['status'],'ready')
+                    retry_settings=self.settings()|dict(hour=16)
+                    with patch.object(service,'prepare',side_effect=ValueError('fixture archive unavailable')):
+                        job=submit_and_wait(retry_settings)
+                        self.assertEqual(job['status'],'failed')
+                        self.assertNotIn('manifest',job)
+                    with patch.object(service,'prepare',prepared_fixture):
+                        self.assertEqual(submit_and_wait(retry_settings)['status'],'ready')
+
                 finally:host.shutdown();host.server_close();thread.join(3)
 
 if __name__=='__main__':unittest.main()
