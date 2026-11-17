@@ -5,11 +5,21 @@ import { constants, domainName, domains, resolutionName, resolutions, tkeModelNa
 import { buildWeatherSelection } from '../weather/weather_selection';
 import { buildSourceView } from '../weather/source_view';
 import { help } from './help';
+import { buildTelemetry } from './telemetry';
 import './controls.css';
 
 export function buildControls(stage: Stage, renderer: VolumetricRenderer) {
-    const gui = new GUI({ title: 'Webnado', width: 370 });
+    const gui = new GUI({ title: 'WEBNADO', width: 400 });
     gui.domElement.classList.add('webnado-controls');
+    const wordmark = document.createElement('span');
+    wordmark.className = 'mission-wordmark';
+    wordmark.textContent = 'WEBNADO';
+    const subtitle = document.createElement('span');
+    subtitle.className = 'mission-subtitle';
+    subtitle.textContent = 'ATMOSPHERIC SYSTEMS';
+    gui.$title.replaceChildren(wordmark, subtitle);
+    gui.$title.setAttribute('aria-label', 'Toggle Webnado control panel');
+    buildTelemetry(gui, stage);
     const tabs = document.createElement('nav');
     tabs.className = 'control-tabs';
     tabs.setAttribute('aria-label', 'Control workspace');
@@ -23,6 +33,8 @@ export function buildControls(stage: Stage, renderer: VolumetricRenderer) {
         folder.$title.hidden = true;
         const button = document.createElement('button');
         button.textContent = name;
+        button.dataset.index = String(tabs.children.length + 1).padStart(2, '0');
+        button.setAttribute('aria-label', name);
         button.addEventListener('click', () => {
             for (const [label, workspace] of Object.entries(workspaces)) {
                 workspace.show(label === name);

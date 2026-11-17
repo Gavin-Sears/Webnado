@@ -55,10 +55,11 @@ export async function buildWeatherSelection(gui: GUI, weather: WeatherData) {
     folder.add(state, 'case', choices).name('Experiment').onChange(updateDescription);
     folder.add(state, 'resolution', { 'Preview · medium grid': 'medium', 'Research · high grid': 'high' }).name('Simulation quality');
     help(folder, 'Research uses the grid from our Iowa and Kansas checks and needs more GPU memory. Preview is cheaper; it may evolve differently. Loading restarts the page.');
-    folder.add({ load: () => {
+    const launch = folder.add({ load: () => {
         const mode = state.case === 'elreno' || state.case === 'sounding' ? state.case : 'hrrr';
         location.assign(experimentUrl(mode, state.resolution, state.case).href);
     } }, 'load').name('Load selected experiment');
+    launch.domElement.classList.add('control-primary');
     const status = help(folder, state.status);
     status.setAttribute('role', 'status');
     updateDescription();

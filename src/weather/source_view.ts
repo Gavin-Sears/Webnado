@@ -5,7 +5,7 @@ import type { WeatherData } from './noaa_loader';
 export function buildSourceView(gui: GUI, weather: WeatherData, seconds: () => number) {
     if (!weather.spatial) return;
     const panel = document.createElement('div');
-    panel.style.cssText = 'position:fixed;bottom:24px;left:12px;background:#14202bee;color:white;padding:8px;font:12px sans-serif;z-index:2';
+    panel.className = 'weather-source-panel';
     panel.hidden = true;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 64;
