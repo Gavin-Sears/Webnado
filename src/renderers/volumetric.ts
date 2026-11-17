@@ -146,6 +146,9 @@ export class VolumetricRenderer extends renderer.Renderer {
     private historyViews: GPUTextureView[] = [];
     private historyIndex = 0;
     private historyValid = false;
+    private historyResetVersion = -1;
+    private historyWindowEast = 0;
+    private historyWindowNorth = 0;
     private temporalBindGroups: GPUBindGroup[] = [];
 
     constructor(stage: Stage) {
@@ -517,15 +520,20 @@ export class VolumetricRenderer extends renderer.Renderer {
         gis.render(camera); // Three submits this itself
         this.writeParams();
 
-        const useTemporal = this.temporal.enabled && this.debugView === 'off';
-        if (!useTemporal) {
-            this.historyValid = false;
-        }
-        this.writeTemporalParams();
-
         const encoder = device.createCommandEncoder({ label: "frame" });
 
         const advanced = solver.step(encoder);
+        const useTemporal = this.temporal.enabled && this.debugView === 'off';
+        // A reset or moving window breaks the previous frame's world-space correspondence.
+        if (!useTemporal || solver.resetVersion !== this.historyResetVersion
+            || solver.storm.windowEast !== this.historyWindowEast
+            || solver.storm.windowNorth !== this.historyWindowNorth) {
+            this.historyValid = false;
+        }
+        this.historyResetVersion = solver.resetVersion;
+        this.historyWindowEast = solver.storm.windowEast;
+        this.historyWindowNorth = solver.storm.windowNorth;
+        this.writeTemporalParams();
         this.updateBindGroups();
         // Tracers follow the projected dust field; the solver owns momentum exchange.
         debris.step(encoder, advanced ? solver.dt : 0, solver.resetVersion);
