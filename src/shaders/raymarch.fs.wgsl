@@ -1,5 +1,5 @@
-// Single scattering raymarch into a reduced resolution target (composite.fs.wgsl upsamples)
-// Output: RGBA, with rgb light toward the camera, and a as transmittance.
+// Multi scattering raymarch into a reduced resolution target (composite.fs.wgsl upsamples)
+// Output: Cloud RGBA, with A as transmittance. Also cloud's average depth in meters at that point.
 
 // must match writeParams() in volumetric.ts
 struct RaymarchParams {
@@ -41,6 +41,8 @@ const emptyBrick = 1e-4;                // g/kg. Bricks under this value are emp
 const boostDepth = 500.0;               // boosted density view
 const brickDims = gridDims / ${brickSize};
 const brickWorldSize = cellSize * f32(${brickSize});
+
+const noHitDepth = 100000.0;
 
 // MATERIAL
 // ========
@@ -137,7 +139,12 @@ fn jitterAt(pixel: vec2f) -> f32 {
     return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715))));
 }
 
-fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4f {
+struct MarchResult {
+    color: vec4f,
+    depth: f32
+}
+
+fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> MarchResult {
     // StepSize becomes larger if we can't reach the end
     let stepSize = max(params.stepCells * cellSize.x, (tEnd - tStart) / f32(params.maxSteps));
     let invDir = safeInverse(dir);
@@ -154,6 +161,8 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
     var t = tStart + jitter * stepSize;
     var light = vec3f(0.0);
     var transmittance = 1.0;
+    var depthSum = 0.0;
+    var weightSum = 0.0;
     for (var i = 0u; i < params.maxSteps && t < tEnd; i++) {
         let world = origin + dir * t;
 
@@ -176,7 +185,10 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             // Clouds barely absorb light, so the light a step blocks is the light it scatters
             // That fraction is at most 1, so long steps can't over-brighten (Hillaire 2015).
             // Dust will eventually require albedo
-            light += transmittance * inScattered(world, phases, shadowOffset) * (1.0 - stepTransmittance);
+            let weight = transmittance * (1.0 - stepTransmittance);
+            light += weight * inScattered(world, phases, shadowOffset);
+            depthSum += weight * t;
+            weightSum += weight;
             transmittance *= stepTransmittance;
             if (transmittance < earlyExitTransmittance) {
                 break;
@@ -184,7 +196,8 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
         }
         t += stepSize;
     }
-    return vec4f(light, transmittance);
+    let depth = select(tEnd, depthSum / weightSum, weightSum > 1e-4);
+    return MarchResult(vec4f(light, transmittance), depth);
 }
 
 // DEBUG VIEWS
@@ -286,14 +299,22 @@ fn fullResPixel(pixel: vec2i, fullSize: vec2i) -> vec2i {
     return min(vec2i((vec2f(pixel) + 0.5) * scale), fullSize - 1);
 }
 
+struct RaymarchOutput {
+    @location(0) color: vec4f,
+    @location(1) depth: f32
+}
+
 @fragment
-fn main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
+fn main(@builtin(position) fragCoord: vec4f) -> RaymarchOutput {
     let fullSize = vec2i(textureDimensions(sceneDepth));
     let pixel = fullResPixel(vec2i(fragCoord.xy), fullSize);
     let uv = (vec2f(pixel) + 0.5) / vec2f(fullSize);
     let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
 
-    let farPoint = camera.invViewProjMat * vec4f(ndc, 1.0, 1.0);
+    let rayUv = fragCoord.xy / vec2f(params.targetSize);
+    let rayNdc = vec2f(rayUv.x * 2.0 - 1.0, 1.0 - rayUv.y * 2.0);
+    let farPoint = camera.invViewProjMat * vec4f(rayNdc, 1.0, 1.0);
+
     let origin = camera.cameraPos;
     let dir = normalize(farPoint.xyz / farPoint.w - origin);
 
@@ -307,10 +328,11 @@ fn main(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
     }
 
     if (hit.x >= hit.y) {
-        return vec4f(0.0, 0.0, 0.0, 1.0);
+        return RaymarchOutput(vec4f(0.0, 0.0, 0.0, 1.0), noHitDepth);
     }
     if (params.debugView != 0u) {
-        return debugMarch(origin, dir, hit.x, hit.y);
+        return RaymarchOutput(debugMarch(origin, dir, hit.x, hit.y), hit.x);
     }
-    return march(origin, dir, hit.x, hit.y, jitterAt(fragCoord.xy));
+    let result = march(origin, dir, hit.x, hit.y, jitterAt(fragCoord.xy));
+    return RaymarchOutput(result.color, result.depth);
 }

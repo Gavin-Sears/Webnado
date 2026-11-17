@@ -10,6 +10,7 @@ import blueNoiseUrl from '../assets/blue_noise_64.png';
 // solver.step(encoder), then three passes of its own:
 //   1. bricks      bricks.cs.wgsl      finds largest density per 8^3 brick, so rays can skip empty space
 //   2. raymarch    raymarch.fs.wgsl    single scattering into a target smaller than the canvas: rgb light, a transmittance
+//   3. temporal    temporal.fs.wgsl    blends with last frame's result, reprojected
 //   3. composite   composite.fs.wgsl   depth-aware upsample, over the scene, tone map, then linear to sRGB for the canvas
 // A light volume pass would go between 1 and 2 (see sunTransmittance in raymarch.fs.wgsl).
 
@@ -59,6 +60,8 @@ const DEBUG_SCALES: Record<string, { value: number, max: number, unit: string }>
 
 const VOLUME_FORMAT: GPUTextureFormat = "rgba16float";
 const PARAMS_SIZE = 112; // RaymarchParams in raymarch.fs.wgsl
+const CLOUD_DEPTH_FORMAT: GPUTextureFormat = "r32float";
+const NO_HIT_DEPTH = 100000; // meters, must match noHitDepth in raymarch.fs.wgsl
 
 const { gridX, gridY, gridZ, brickSize } = shaders.constants;
 const BRICK_DIMS: [number, number, number] = [gridX / brickSize, gridY / brickSize, gridZ / brickSize];
@@ -79,7 +82,7 @@ export class VolumetricRenderer extends renderer.Renderer {
     };
     shadowDistance = 6000;      // meters
     brickSkipping = true;
-    animateJitter = false;
+    animateJitter = true;
     blueNoiseToggle = true;
     multipleScattering = {
         octaves: 3,             // degree of detail we use to approximate scattering. 1 is for single scattering
@@ -87,6 +90,11 @@ export class VolumetricRenderer extends renderer.Renderer {
         contribution: 0.5,      // light multiplier per octave
         eccentricity: 0.5,      // phase g multiplier per octave
     }
+    temporal = {
+        enabled: true,
+        blend: 0.1,
+        clampHistory: true
+    };
     debugView = 'off';
     debugScale = 1;
     debugBoost = false;         // density view: makes faint cloud visible
@@ -116,11 +124,22 @@ export class VolumetricRenderer extends renderer.Renderer {
     private boundBlueNoise: GPUTexture | undefined;
     private boundVolume: GPUTexture | undefined;
     private raymarchBindGroups: GPUBindGroup[] = [];    // by 2 * thermo.index + velocity.index
-    private compositeBindGroup: GPUBindGroup | undefined;
+    private compositeBindGroups: GPUBindGroup[] = [];
 
     private blueNoiseTexture: GPUTexture;
     private blueNoiseView: GPUTextureView;
     private blueNoiseLoaded = false;
+
+    private temporalPipeline: GPURenderPipeline;
+    private temporalParamsBuffer: GPUBuffer;
+    private temporalParamsData = new ArrayBuffer(16);
+    private cloudDepthTexture: GPUTexture | undefined;
+    private cloudDepthView: GPUTextureView | undefined;
+    private historyTextures: GPUTexture[] = [];
+    private historyViews: GPUTextureView[] = [];
+    private historyIndex = 0;
+    private historyValid = false;
+    private temporalBindGroups: GPUBindGroup[] = [];
 
     constructor(stage: Stage) {
         super(stage);
@@ -131,15 +150,21 @@ export class VolumetricRenderer extends renderer.Renderer {
         this.quality = { ...qualityPresets[this.qualityName] };
 
         const vertex = { module: device.createShaderModule({ label: "fullscreen vert shader", code: shaders.fullscreenVertSrc }) };
-        const fragment = (label: string, code: string, format: GPUTextureFormat): GPUFragmentState => ({
+        const fragment = (label: string, code: string, ...formats: GPUTextureFormat[]): GPUFragmentState => ({
             module: device.createShaderModule({ label: `${label} frag shader`, code }),
-            targets: [{ format }]
+            targets: formats.map(format => ({ format }))
         });
         this.raymarchPipeline = device.createRenderPipeline({
             label: "raymarch",
             layout: "auto",
             vertex,
-            fragment: fragment("raymarch", shaders.raymarchFragSrc, VOLUME_FORMAT)
+            fragment: fragment("raymarch", shaders.raymarchFragSrc, VOLUME_FORMAT, CLOUD_DEPTH_FORMAT)
+        });
+        this.temporalPipeline = device.createRenderPipeline({
+            label: "temporal",
+            layout: "auto",
+            vertex,
+            fragment: fragment("temporal", shaders.temporalFragSrc, VOLUME_FORMAT)
         });
         this.compositePipeline = device.createRenderPipeline({
             label: "composite",
@@ -176,6 +201,12 @@ export class VolumetricRenderer extends renderer.Renderer {
                 { binding: 1, resource: this.brickView }
             ]
         }));
+
+        this.temporalParamsBuffer = device.createBuffer({
+            label: "temporal params",
+            size: this.temporalParamsData.byteLength,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
 
         this.blueNoiseTexture = this.createBlueNoiseTexture(1, 1);
         this.blueNoiseView = this.blueNoiseTexture.createView();
@@ -234,6 +265,11 @@ export class VolumetricRenderer extends renderer.Renderer {
         quality.add(this, 'animateJitter').name('animate jitter');
         quality.add(this, 'blueNoiseToggle').name('blue noise jitter');
 
+        const temporal = folder.addFolder('Temporal');
+        temporal.add(this.temporal, 'enabled');
+        temporal.add(this.temporal, 'blend', 0.02, 1, 0.01).name('new frame weight');
+        temporal.add(this.temporal, 'clampHistory').name('clamp history');
+
         const lighting = folder.addFolder('Lighting');
         lighting.add(this.lighting, 'sunAzimuth', -180, 180, 1).name('sun azimuth');
         lighting.add(this.lighting, 'sunElevation', 0, 90, 1).name('sun elevation');
@@ -277,6 +313,9 @@ export class VolumetricRenderer extends renderer.Renderer {
         this.brickTexture.destroy();
         this.paramsBuffer.destroy();
         this.blueNoiseTexture.destroy();
+        this.cloudDepthTexture?.destroy();
+        this.historyTextures.forEach(texture => texture.destroy());
+        this.temporalParamsBuffer.destroy();
     }
 
     private updateVolumeTarget() {
@@ -296,6 +335,20 @@ export class VolumetricRenderer extends renderer.Renderer {
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
         });
         this.volumeView = this.volumeTexture.createView();
+
+        const target = (label: string, format: GPUTextureFormat) => renderer.device.createTexture({
+            label,
+            size: { width, height },
+            format,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+        });
+        this.cloudDepthTexture?.destroy();
+        this.cloudDepthTexture = target("cloud depth", CLOUD_DEPTH_FORMAT);
+        this.cloudDepthView = this.cloudDepthTexture.createView();
+        this.historyTextures.forEach(texture => texture.destroy());
+        this.historyTextures = [target("history 0", VOLUME_FORMAT), target("history 1", VOLUME_FORMAT)];
+        this.historyViews = this.historyTextures.map(texture => texture.createView());
+        this.historyValid = false;
     }
 
     private updateBindGroups() {
@@ -324,16 +377,34 @@ export class VolumetricRenderer extends renderer.Renderer {
         }
 
         if (color !== this.boundColor || depth !== this.boundDepth || this.volumeTexture !== this.boundVolume) {
-            this.compositeBindGroup = device.createBindGroup({
-                label: "composite",
-                layout: this.compositePipeline.getBindGroupLayout(0),
+            const colorView = color.createView();
+            const depthView = depth.createView();
+            this.compositeBindGroups = [...this.historyViews, this.volumeView!].map((view, i) => 
+                device.createBindGroup({
+                    label: `composite ${i}`,
+                    layout: this.compositePipeline.getBindGroupLayout(0),
+                    entries: [
+                        { binding: 0, resource: { buffer: camera.uniformsBuffer } },
+                        { binding: 1, resource: colorView },
+                        { binding: 2, resource: depthView },
+                        { binding: 3, resource: view }
+                    ]
+                }));
+        }
+
+        if (this.volumeTexture !== this.boundVolume) {
+            this.temporalBindGroups = [0, 1].map(i => device.createBindGroup({
+                label: `temporal ${i}`,
+                layout: this.temporalPipeline.getBindGroupLayout(0),
                 entries: [
                     { binding: 0, resource: { buffer: camera.uniformsBuffer } },
-                    { binding: 1, resource: color.createView() },
-                    { binding: 2, resource: depth.createView() },
-                    { binding: 3, resource: this.volumeView! }
+                    { binding: 1, resource: { buffer: this.temporalParamsBuffer } },
+                    { binding: 2, resource: this.volumeView! },
+                    { binding: 3, resource: this.cloudDepthView! },
+                    { binding: 4, resource: this.historyViews[i] },
+                    { binding: 5, resource: this.linearSampler }
                 ]
-            });
+            }));
         }
 
         this.boundColor = color;
@@ -375,6 +446,16 @@ export class VolumetricRenderer extends renderer.Renderer {
         renderer.device.queue.writeBuffer(this.paramsBuffer, 0, this.paramsData);
     }
 
+    private writeTemporalParams() {
+        const f = new Float32Array(this.temporalParamsData);
+        const u = new Uint32Array(this.temporalParamsData);
+        f[0] = this.temporal.blend;
+        u[1] = this.historyValid ? 1 : 0;
+        u[2] = this.temporal.clampHistory ? 1 : 0;
+
+        renderer.device.queue.writeBuffer(this.temporalParamsBuffer, 0, this.temporalParamsData);
+    }
+
     override draw() {
         const { gis, camera, solver, fields } = this.stage;
         const device = renderer.device;
@@ -384,6 +465,12 @@ export class VolumetricRenderer extends renderer.Renderer {
         gis.render(camera); // Three submits this itself
         this.updateBindGroups();
         this.writeParams();
+
+        const useTemporal = this.temporal.enabled && this.debugView === 'off';
+        if (!useTemporal) {
+            this.historyValid = false;
+        }
+        this.writeTemporalParams();
 
         const encoder = device.createCommandEncoder({ label: "frame" });
 
@@ -407,12 +494,41 @@ export class VolumetricRenderer extends renderer.Renderer {
                 clearValue: [0, 0, 0, 1],
                 loadOp: "clear",
                 storeOp: "store"
+            }, {
+                view: this.cloudDepthView!,
+                clearValue: [NO_HIT_DEPTH, 0, 0, 0],
+                loadOp: "clear",
+                storeOp: "store"
             }]
         });
         raymarchPass.setPipeline(this.raymarchPipeline);
         raymarchPass.setBindGroup(0, this.raymarchBindGroups[2 * fields.thermo.index + fields.velocity.index]);
         raymarchPass.draw(3);
         raymarchPass.end();
+
+        let shown = 2;
+        if (useTemporal) {
+            const read = this.historyIndex;
+            const write = 1 - read;
+            const temporalPass = encoder.beginRenderPass({
+                label: "temporal pass",
+                timestampWrites: profiler?.passWrites("temporal"),
+                colorAttachments: [{
+                    view: this.historyViews[write],
+                    loadOp: "clear",
+                    storeOp: "store"
+                }]
+            });
+
+            temporalPass.setPipeline(this.temporalPipeline);
+            temporalPass.setBindGroup(0, this.temporalBindGroups[read]);
+            temporalPass.draw(3);
+            temporalPass.end();
+
+            shown = write;
+            this.historyIndex = write;
+            this.historyValid = true;
+        }
 
         const compositePass = encoder.beginRenderPass({
             label: "composite pass",
@@ -424,7 +540,7 @@ export class VolumetricRenderer extends renderer.Renderer {
             }]
         });
         compositePass.setPipeline(this.compositePipeline);
-        compositePass.setBindGroup(0, this.compositeBindGroup!);
+        compositePass.setBindGroup(0, this.compositeBindGroups[shown]);
         compositePass.draw(3);
         compositePass.end();
 
