@@ -17,12 +17,30 @@ import testVolumeComputeRaw from './test_volume.cs.wgsl?raw';
 export const resolutions: Record<string, [number, number, number]> = {
     low: [64, 32, 64],
     medium: [128, 64, 128],
-    high: [256, 128, 256]
+    balanced: [192, 96, 192],
+    high: [256, 128, 256],
+    fine: [384, 128, 384],
+    vertical: [256, 256, 256],
+    dense: [320, 192, 320]
 };
 
 const requestedResolution = new URLSearchParams(window.location.search).get('res') ?? 'medium';
 export const resolutionName = Object.hasOwn(resolutions, requestedResolution) ? requestedResolution : 'medium';
 const [gridX, gridY, gridZ] = resolutions[resolutionName];
+export const domains = {
+    storm: [12800, 6400, 12800],
+    local: [3200, 1600, 3200],
+    supercell: [64000, 18000, 64000],
+    'storm-focus': [32000, 18000, 32000]
+} as const;
+const requestedDomain = new URLSearchParams(window.location.search).get('domain')
+    ?? (['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '') ? 'supercell' : 'storm');
+export const domainName = Object.hasOwn(domains, requestedDomain) ? requestedDomain as keyof typeof domains : 'storm';
+const [domainX, domainY, domainZ] = domains[domainName];
+const weatherQuery = new URLSearchParams(window.location.search);
+const spatialCase = weatherQuery.get('case') === 'hrrr';
+export const tkeModelName = weatherQuery.get('tke') === 'deardorff' ? 'deardorff' : 'legacy';
+const atmosphericTke = tkeModelName === 'deardorff';
 
 // Declared this way so minification keeps values that only shaders use
 export const constants = {
@@ -31,11 +49,25 @@ export const constants = {
     gridZ,
 
     // box size in meters, centered on x = z = 0 with the ground at y = 0
-    domainX: 12800,
-    domainY: 6400,
-    domainZ: 12800,
+    domainX,
+    domainY,
+    domainZ,
 
-    atmosphereSlices: 64,
+    atmosphereSlices: domainName === 'supercell' || domainName === 'storm-focus' ? 256 : 64,
+    freeSlipGround: Number(domainName === 'supercell' || domainName === 'storm-focus'),
+    spatialWeather: Number(spatialCase),
+    preciseScalars: Number(weatherQuery.get('state') === '32'),
+    scalarFormat: weatherQuery.get('state') === '32' ? 'rgba32float' as const : 'rgba16float' as const,
+    // Deardorff coefficients: https://doi.org/10.1175/MWR-2847.1
+    tkeViscosity: atmosphericTke ? 0.1 : 0.2,
+    tkeDissipation: atmosphericTke ? 0.7 : 0.2,
+    tkeGeometricLength: Number(atmosphericTke),
+    tkeScalarMixing: atmosphericTke ? 1 : 0.1,
+    anelasticAir: Number(['elreno', 'hrrr'].includes(new URLSearchParams(window.location.search).get('case') ?? '')
+        && (weatherQuery.get('projection') ?? (spatialCase ? 'anelastic' : 'volume')) === 'anelastic'),
+    velocityFormat: (weatherQuery.get('precision') ?? (spatialCase ? '32' : '16')) === '32'
+        ? 'rgba32float' as const : 'rgba16float' as const,
+    dustSeedRadius: Math.min(1200, 0.15 * domainX),
 
     brickSize: 8    // cells per side of a brick, for skipping empty space
 };
@@ -63,7 +95,10 @@ export function processShaderRaw(raw: string) {
 }
 
 export const fullscreenVertSrc: string = processShaderRaw(fullscreenVertRaw);
-export const raymarchFragSrc: string = processShaderRaw(raymarchFragRaw);
+const raymarchSource = constants.preciseScalars
+    ? raymarchFragRaw.replaceAll('textureSampleLevel(thermo, linearSampler, uvw, 0.0)', 'sampleVolume(thermo, uvw)')
+    : raymarchFragRaw;
+export const raymarchFragSrc: string = processShaderRaw(raymarchSource);
 export const compositeFragSrc: string = processShaderRaw(compositeFragRaw);
 export const bricksComputeSrc: string = processShaderRaw(bricksComputeRaw);
 export const testVolumeComputeSrc: string = processShaderRaw(testVolumeComputeRaw);

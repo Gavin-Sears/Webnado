@@ -17,7 +17,7 @@ struct RaymarchParams {
     brickSkipping: u32,
     debugView: u32,
     debugScale: f32,
-    debugBoost: u32         // density view: 1 makes faint cloud visible
+    debugBoost: u32,        // density view: 1 makes faint cloud visible
 }
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -28,6 +28,8 @@ struct RaymarchParams {
 @group(0) @binding(5) var brickMax: texture_3d<f32>;   // largest qc + qr near each brick (bricks.cs.wgsl)
 @group(0) @binding(6) var velocity: texture_3d<f32>;   // debug views only
 @group(0) @binding(7) var obstacle: texture_3d<u32>;   // debug views only
+@group(0) @binding(8) var dustVelocity: texture_3d<f32>; // debug views only
+@group(0) @binding(9) var dustDensity: texture_3d<f32>;  // debug views only
 
 const pi = 3.14159265;
 const earlyExitTransmittance = 0.01;
@@ -39,10 +41,30 @@ const brickWorldSize = cellSize * f32(${brickSize});
 // MATERIAL
 // ========
 
+fn sampleVolume(field: texture_3d<f32>, uvw: vec3f) -> vec4f {
+    let dimensions = vec3i(textureDimensions(field));
+    let position = clamp(uvw * vec3f(dimensions) - 0.5, vec3f(0), vec3f(dimensions - 1));
+    let base = vec3i(floor(position));
+    let fraction = fract(position);
+    var value = vec4f(0);
+    for (var z = 0; z < 2; z++) {
+        for (var y = 0; y < 2; y++) {
+            for (var x = 0; x < 2; x++) {
+                let corner = vec3i(x, y, z);
+                let weight = mix(1.0 - fraction, fraction, vec3f(corner));
+                value += weight.x * weight.y * weight.z
+                    * textureLoad(field, min(base + corner, dimensions - 1), 0);
+            }
+        }
+    }
+    return value;
+}
+
 // Fraction of light blocked per meter at a point (1/m)
 fn extinctionAt(world: vec3f) -> f32 {
-    let q = textureSampleLevel(thermo, linearSampler, (world - domainMin) / domainSize, 0.0);
-    return (q.z + q.w) * params.extinction;
+    let uvw = (world - domainMin) / domainSize;
+    let q = textureSampleLevel(thermo, linearSampler, uvw, 0.0);
+    return max((q.z + q.w) * params.extinction, 0.0);
 }
 
 // How much scattered light goes cosTheta away from its original direction. Integrates to 1 over the sphere.
@@ -137,7 +159,6 @@ fn march(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32, jitter: f32) -> vec4
             let shadowOffset = fract(jitter + stepNumber * 0.618034);
             // Clouds barely absorb light, so the light a step blocks is the light it scatters
             // That fraction is at most 1, so long steps can't over-brighten (Hillaire 2015).
-            // Dust will eventually require albedo
             light += transmittance * inScattered(world, sunPhase, shadowOffset) * (1.0 - stepTransmittance);
             transmittance *= stepTransmittance;
             if (transmittance < earlyExitTransmittance) {
@@ -161,9 +182,18 @@ fn heat(x: f32) -> vec3f {
 fn velocityAt(uvw: vec3f) -> vec3f {
     let half = 0.5 / vec3f(gridDims);
     return vec3f(
-        textureSampleLevel(velocity, linearSampler, uvw + vec3f(half.x, 0.0, 0.0), 0.0).x,
-        textureSampleLevel(velocity, linearSampler, uvw + vec3f(0.0, half.y, 0.0), 0.0).y,
-        textureSampleLevel(velocity, linearSampler, uvw + vec3f(0.0, 0.0, half.z), 0.0).z
+        sampleVolume(velocity, uvw + vec3f(half.x, 0.0, 0.0)).x,
+        sampleVolume(velocity, uvw + vec3f(0.0, half.y, 0.0)).y,
+        sampleVolume(velocity, uvw + vec3f(0.0, 0.0, half.z)).z
+    );
+}
+
+fn dustVelocityAt(uvw: vec3f) -> vec3f {
+    let half = 0.5 / vec3f(gridDims);
+    return vec3f(
+        textureSampleLevel(dustVelocity, linearSampler, uvw + vec3f(half.x, 0, 0), 0).x,
+        textureSampleLevel(dustVelocity, linearSampler, uvw + vec3f(0, half.y, 0), 0).y,
+        textureSampleLevel(dustVelocity, linearSampler, uvw + vec3f(0, 0, half.z), 0).z
     );
 }
 
@@ -174,6 +204,16 @@ fn vorticityAt(uvw: vec3f) -> vec3f {
     let dy = (velocityAt(uvw + vec3f(0.0, cell.y, 0.0)) - velocityAt(uvw - vec3f(0.0, cell.y, 0.0))) / (2.0 * cellSize.y);
     let dz = (velocityAt(uvw + vec3f(0.0, 0.0, cell.z)) - velocityAt(uvw - vec3f(0.0, 0.0, cell.z))) / (2.0 * cellSize.z);
     return vec3f(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
+}
+
+fn horizontalRotationAt(uvw: vec3f) -> vec2f {
+    let cell = 1.0 / vec3f(gridDims);
+    let dx = (velocityAt(uvw + vec3f(cell.x, 0, 0)) - velocityAt(uvw - vec3f(cell.x, 0, 0))) / (2.0 * cellSize.x);
+    let dz = (velocityAt(uvw + vec3f(0, 0, cell.z)) - velocityAt(uvw - vec3f(0, 0, cell.z))) / (2.0 * cellSize.z);
+    let trace = dx.x + dz.z;
+    let determinant = dx.x * dz.z - dz.x * dx.z;
+    let swirl = 0.5 * sqrt(max(0.0, 4.0 * determinant - trace * trace));
+    return vec2f(dz.x - dx.z, swirl);
 }
 
 // Unlit, half a cell per step, unaffected by quality settings
@@ -223,6 +263,24 @@ fn debugMarch(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32) -> vec4f {
                 let material = textureLoad(obstacle, cell, 0).r;
                 sampleColor = select(vec3f(0.75), vec3f(0.45, 0.32, 0.18), material == 1u);
                 opacity = select(0.0, 1.0, material != 0u);
+            }
+            case 7u: {
+                let cell = clamp(vec3i(floor(uvw * vec3f(gridDims))), vec3i(0), gridDims - 1);
+                let amount = textureLoad(dustDensity, cell, 0).x / params.debugScale;
+                sampleColor = heat(amount);
+                opacity = 0.05 * clamp(amount, 0.0, 1.0);
+            }
+            case 8u: {
+                let velocity = dustVelocityAt(uvw);
+                let speed = length(velocity);
+                sampleColor = 0.5 + 0.5 * velocity / max(speed, 1e-6);
+                opacity = 0.05 * clamp(speed / params.debugScale, 0.0, 1.0);
+            }
+            case 9u, 10u: {
+                let rotation = horizontalRotationAt(uvw);
+                let amount = select(abs(rotation.x), rotation.y, params.debugView == 10u) / params.debugScale;
+                sampleColor = select(vec3f(0.2, 0.4, 1.0), heat(amount), rotation.x >= 0.0);
+                opacity = 0.1 * pow(clamp(amount, 0.0, 1.0), 3.0);
             }
             // bricks the raymarcher won't skip, in checkerboard pattern
             default: {

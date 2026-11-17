@@ -1,6 +1,6 @@
 // Creates test volumes for raymarcher
 
-@group(0) @binding(0) var thermoOut: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(0) var thermoOut: texture_storage_3d<${scalarFormat}, write>;
 
 override testVolume: u32 = 0;
 
