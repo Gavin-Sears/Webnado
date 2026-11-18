@@ -68,10 +68,15 @@ fn sampleVolume(field: texture_3d<f32>, uvw: vec3f) -> vec4f {
     return value;
 }
 
+// The only filtered read of thermo. Without float32-filterable, shaders.ts swaps the body for sampleVolume.
+fn sampleThermo(uvw: vec3f) -> vec4f {
+    return textureSampleLevel(thermo, linearSampler, uvw, 0.0);
+}
+
 // Fraction of light blocked per meter at a point (1/m)
 fn extinctionAt(world: vec3f) -> f32 {
     let uvw = (world - domainMin) / domainSize;
-    let q = textureSampleLevel(thermo, linearSampler, uvw, 0.0);
+    let q = sampleThermo(uvw);
     return max((q.z + q.w) * params.extinction, 0.0);
 }
 
@@ -284,7 +289,7 @@ fn debugMarch(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32) -> vec4f {
             // qc + qr, white at debugScale. Opacity matches the real render, unless boosted: then it follows
             // debugScale instead, so faint clouds show up.
             case 1u: {
-                let q = textureSampleLevel(thermo, linearSampler, uvw, 0.0);
+                let q = sampleThermo(uvw);
                 let amount = (q.z + q.w) / params.debugScale;
                 sampleColor = heat(amount);
                 let extinction = select((q.z + q.w) * params.extinction, amount / boostDepth, params.debugBoost != 0u);
@@ -292,7 +297,7 @@ fn debugMarch(origin: vec3f, dir: vec3f, tStart: f32, tEnd: f32) -> vec4f {
             }
             // theta': red warmer than the background, blue colder, fully opaque at debugScale K
             case 2u: {
-                let theta = textureSampleLevel(thermo, linearSampler, uvw, 0.0).x;
+                let theta = sampleThermo(uvw).x;
                 sampleColor = select(vec3f(0.2, 0.4, 1.0), vec3f(1.0, 0.3, 0.15), theta > 0.0);
                 opacity = 0.05 * clamp(abs(theta) / params.debugScale, 0.0, 1.0);
             }

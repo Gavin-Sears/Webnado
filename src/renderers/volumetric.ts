@@ -152,7 +152,7 @@ export class VolumetricRenderer extends renderer.Renderer {
             label: "raymarch",
             layout: "auto",
             vertex,
-            fragment: fragment("raymarch", shaders.raymarchFragSrc, VOLUME_FORMAT, CLOUD_DEPTH_FORMAT)
+            fragment: fragment("raymarch", shaders.raymarchFragSrc(device.features.has("float32-filterable")), VOLUME_FORMAT, CLOUD_DEPTH_FORMAT)
         });
         this.temporalPipeline = device.createRenderPipeline({
             label: "temporal",
