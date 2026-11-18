@@ -129,8 +129,9 @@ export async function initWebGPU() {
     const urlParams = new URLSearchParams(window.location.search);
     const profiling = urlParams.has("profile");
 
-    // Three.js shares this device and can't add features later, so tile texture formats are requested here
-    const wantedFeatures: GPUFeatureName[] = ["texture-compression-bc", "texture-compression-etc2", "texture-compression-astc"];
+    // Three.js shares this device and can't add features later, so tile texture formats are requested here.
+    // float32-filterable lets the raymarcher filter 32-bit thermo in hardware (see raymarchFragSrc).
+    const wantedFeatures: GPUFeatureName[] = ["texture-compression-bc", "texture-compression-etc2", "texture-compression-astc", "float32-filterable"];
     if (profiling) {
         wantedFeatures.push("timestamp-query");
     }

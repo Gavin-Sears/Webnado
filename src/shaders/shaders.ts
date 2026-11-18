@@ -96,10 +96,23 @@ export function processShaderRaw(raw: string) {
 }
 
 export const fullscreenVertSrc: string = processShaderRaw(fullscreenVertRaw);
-const raymarchSource = constants.preciseScalars
-    ? raymarchFragRaw.replaceAll('textureSampleLevel(thermo, linearSampler, uvw, 0.0)', 'sampleVolume(thermo, uvw)')
-    : raymarchFragRaw;
-export const raymarchFragSrc: string = processShaderRaw(raymarchSource);
+const filteredThermo = 'return textureSampleLevel(thermo, linearSampler, uvw, 0.0);';
+
+// In raymarch.fs.wgsl, always read thermo with sampleThermo(uvw) 
+// and don't textureSample directly. Devices without float32-filterable 
+// (32 float texture hardware sampling) will use sampleVolume() in the function body 
+// instead, so 32-bit thermo filtering still works.
+export function raymarchFragSrc(float32Filterable: boolean): string {
+    if (constants.scalarFormat !== 'rgba32float' || float32Filterable) {
+        return processShaderRaw(raymarchFragRaw);
+    }
+    const source = raymarchFragRaw.replace(filteredThermo, 'return sampleVolume(thermo, uvw);');
+    if (source === raymarchFragRaw || /textureSample\w*\(\s*thermo/.test(source)) {
+        throw new Error('raymarch.fs.wgsl must read thermo only through sampleThermo(), whose body must be: ' + filteredThermo);
+    }
+    return processShaderRaw(source);
+}
+
 export const compositeFragSrc: string = processShaderRaw(compositeFragRaw);
 export const temporalFragSrc: string = processShaderRaw(temporalFragRaw);
 export const bricksComputeSrc: string = processShaderRaw(bricksComputeRaw);
