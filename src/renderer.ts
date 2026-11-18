@@ -36,8 +36,7 @@ let gpuErrorCount = 0;
 let gpuErrorBanner: HTMLElement | undefined;
 
 // Logs each message once and keeps a count on screen
-function reportGpuError(event: GPUUncapturedErrorEvent) {
-    const message = event.error.message;
+function reportGpuError(message: string) {
     gpuErrorCount++;
 
     if (!gpuErrorMessages.has(message) && gpuErrorMessages.size < MAX_GPU_ERROR_MESSAGES) {
@@ -51,6 +50,51 @@ function reportGpuError(event: GPUUncapturedErrorEvent) {
         document.body.appendChild(gpuErrorBanner);
     }
     gpuErrorBanner.textContent = `WebGPU errors: ${gpuErrorCount}. Latest:\n${message}`;
+}
+
+// Where in our code a pipeline or shader was created, skipping this file's wrappers
+function callerStack() {
+    return (new Error().stack ?? '').split('\n').filter(line => line && line !== 'Error' && !/callerStack|traceGpuCreation|renderer\.ts/.test(line)).slice(0, 4).join('\n');
+}
+
+// Shader compile messages with the offending source line, and pipeline errors with the pipeline's name
+function traceGpuCreation(device: GPUDevice) {
+    const createShaderModule = device.createShaderModule.bind(device);
+    device.createShaderModule = (descriptor) => {
+        const module = createShaderModule(descriptor);
+        const caller = callerStack();
+        module.getCompilationInfo().then(info => {
+            const lines = descriptor.code.split('\n');
+            for (const m of info.messages) {
+                if (m.type === 'info') {
+                    continue;
+                }
+                const where = m.lineNum > 0 ? `:${m.lineNum}:${m.linePos}\n    ${lines[m.lineNum - 1]?.trim()}` : '';
+                const text = `Shader "${descriptor.label ?? ''}" ${m.type}${where}\n${m.message}\n${caller}`;
+                m.type === 'error' ? reportGpuError(text) : console.warn(text);
+            }
+        });
+        return module;
+    };
+
+    const scoped = <D extends GPUObjectDescriptorBase, R>(create: (descriptor: D) => R, describe: (descriptor: D) => string) => (descriptor: D) => {
+        device.pushErrorScope('validation');
+        device.pushErrorScope('internal');
+        const result = create(descriptor);
+        const caller = callerStack();
+        for (const scope of [device.popErrorScope(), device.popErrorScope()]) {
+            scope.then(error => {
+                if (error) {
+                    reportGpuError(`${describe(descriptor)}\n${error.message}\n${caller}`);
+                }
+            });
+        }
+        return result;
+    };
+    device.createComputePipeline = scoped(device.createComputePipeline.bind(device),
+        d => `Compute pipeline "${d.label ?? ''}" (shader "${d.compute.module.label}", entry ${d.compute.entryPoint ?? 'default'})`);
+    device.createRenderPipeline = scoped(device.createRenderPipeline.bind(device),
+        d => `Render pipeline "${d.label ?? ''}" (vertex "${d.vertex.module.label}", fragment "${d.fragment?.module.label ?? 'none'}")`);
 }
 
 function resizeCanvas(entries?: ResizeObserverEntry[]) {
@@ -104,7 +148,10 @@ export async function initWebGPU() {
         requiredLimits
     });
 
-    device.addEventListener("uncapturederror", reportGpuError);
+    device.addEventListener("uncapturederror", event => reportGpuError(event.error.message));
+    traceGpuCreation(device);
+    console.log("GPU limits", Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(GPUSupportedLimits.prototype))
+        .filter(([, d]) => d.get).map(([name]) => [name, (device.limits as any)[name]])), "features", [...device.features]);
 
     device.lost.then((info) => {
         console.error(`WebGPU device lost (${info.reason}): ${info.message}`);
