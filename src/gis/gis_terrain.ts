@@ -10,6 +10,15 @@ import { ObstacleGrid } from "./obstacle_grid";
 import { TileLayer } from "./tile_layer";
 import type { SpatialWeather } from '../weather/spatial_weather';
 
+function initialSource() {
+    const query = new URLSearchParams(location.search);
+    const scene = query.get('scene') ?? '';
+    if (['flat', 'demo'].includes(scene)) {
+        return scene;
+    }
+    return ['elreno', 'hrrr'].includes(query.get('case') ?? '') ? 'flat' : 'demo';
+}
+
 // Draws terrain and buildings with Three.js into its own render target
 // Input: a Site and the camera
 // Output: sceneColorTexture and sceneDepthTexture for the raymarch renderer, 
@@ -29,7 +38,7 @@ export class GisTerrain {
     private rebakeRequested = false;
     private readonly attribution = document.createElement('div');
 
-    source = ['elreno', 'hrrr'].includes(new URLSearchParams(location.search).get('case') ?? '') ? 'flat' : 'demo';
+    source = initialSource();
     tilesetUrl = 'https://raw.githubusercontent.com/CesiumGS/3d-tiles-samples/main/1.0/TilesetWithDiscreteLOD/tileset.json';
     latitude: number;
     longitude: number;
