@@ -34,6 +34,7 @@ jobs:
         env:
           GITHUB_ACTIONS_BASE: ${{ steps.pages.outputs.base_path }}/
           VITE_WEATHER_API_URL: ${{ vars.VITE_WEATHER_API_URL }}
+          VITE_CESIUM_ION_TOKEN: ${{ secrets.VITE_CESIUM_ION_TOKEN }}
       - uses: actions/cache@v4
         id: weather
         with:
