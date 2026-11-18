@@ -1,0 +1,4 @@
+eccodes==2.50.1
+numpy==2.5.5
+pyproj==3.8.0
+requests==2.34.2

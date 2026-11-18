@@ -1,3 +1,4 @@
+import { groundElevation } from './elevation';
 import { Box3, Matrix4, MathUtils, Object3D, Sphere } from 'three';
 import { TilesRenderer } from '3d-tiles-renderer';
 import { CesiumIonAuthPlugin, GLTFExtensionsPlugin, QuantizedMeshPlugin } from '3d-tiles-renderer/plugins';
@@ -15,7 +16,10 @@ export class TileLayer {
         site: Site | undefined,
         assetId: string | undefined,
         onChange: () => void,
-        onError: (message: string) => void
+        onError: (message: string) => void,
+        automaticElevation = true,
+        onAnchor?: (latitude: number, longitude: number, elevation: number) => void,
+        manualElevation?: number
     ) {
         this.tiles = new TilesRenderer(url);
         this.tiles.errorTarget = 8;
@@ -35,7 +39,8 @@ export class TileLayer {
                 }
             }));
         }
-        this.tiles.addEventListener('load-root-tileset', () => {
+        let aligned = site !== undefined;
+        this.tiles.addEventListener('load-root-tileset', async () => {
             let latitude = site?.latitude ?? 0;
             let longitude = site?.longitude ?? 0;
             let height = site?.elevation ?? 0;
@@ -56,6 +61,19 @@ export class TileLayer {
                 longitude = MathUtils.radToDeg(coordinates.lon);
                 height = coordinates.height;
             }
+            aligned = true;
+            if (!site && automaticElevation) {
+                this.tiles.group.visible = false;
+                try {
+                    height = await groundElevation(latitude, longitude);
+                } catch (error) {
+                    onError(String(error));
+                    return;
+                }
+            }
+            if (!site && !automaticElevation && manualElevation !== undefined) height = manualElevation;
+            onAnchor?.(latitude, longitude, height);
+            this.tiles.group.visible = true;
             const frame = this.tiles.ellipsoid.getEastNorthUpFrame(
                 MathUtils.degToRad(latitude), MathUtils.degToRad(longitude), height, new Matrix4()
             );
@@ -64,7 +82,6 @@ export class TileLayer {
             this.tiles.group.updateMatrixWorld(true);
             onChange();
         });
-        let aligned = site !== undefined;
         this.tiles.addEventListener('load-model', event => {
             if (!aligned) {
                 this.tiles.group.updateMatrixWorld(true);

@@ -1,0 +1,353 @@
+.lil-gui.webnado-controls,
+.webnado-controls .lil-gui {
+    --background-color: #0c1014;
+    --widget-color: #161c22;
+    --hover-color: #202a33;
+    --focus-color: #293943;
+    --text-color: #e6ecef;
+    --title-background-color: #10161c;
+    --title-text-color: #e6ecef;
+    --number-color: #d7edf4;
+    --string-color: #d3dfe5;
+    --font-family: 'Bahnschrift', 'DIN Alternate', 'Segoe UI', sans-serif;
+    --font-family-mono: 'Cascadia Code', Consolas, monospace;
+    --font-size: 12px;
+    --input-font-size: 12px;
+    --widget-height: 28px;
+    --title-height: 36px;
+    --name-width: 49%;
+    --padding: 10px;
+    --spacing: 5px;
+    --folder-indent: 0;
+    --widget-border-radius: 0;
+    --slider-knob-width: 2px;
+}
+
+.lil-gui.webnado-controls {
+    --accent: #a7dce9;
+    --muted: #8b9ba6;
+    --line: #28323b;
+    max-width: 100vw;
+    max-height: 100dvh;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    overflow: clip;
+    box-shadow: -12px 12px 40px #0004;
+}
+
+.webnado-controls.lil-gui.autoPlace,
+.webnado-controls.lil-gui.lil-auto-place {
+    right: 0;
+    top: 0;
+}
+
+.webnado-controls.lil-root > .lil-title {
+    height: 36px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 14px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--line);
+    background: #080c10;
+}
+
+.webnado-controls > .lil-title::before {
+    display: none;
+}
+
+.webnado-controls > .lil-title::after {
+    content: '−';
+    margin-left: auto;
+    font: 20px var(--font-family-mono);
+    color: var(--muted);
+}
+
+.webnado-controls.lil-closed > .lil-title::after {
+    content: '+';
+}
+
+.control-tabs {
+    display: flex;
+    flex-shrink: 0;
+    border-block: 1px solid var(--line);
+    background: #080c10;
+}
+
+.webnado-controls .control-tabs button {
+    flex: 1;
+    position: relative;
+    padding: 10px 8px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font: 10px var(--font-family-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.webnado-controls .control-tabs button + button {
+    border-left: 1px solid var(--line);
+}
+
+.webnado-controls .control-tabs button[aria-pressed=true] {
+    color: #f1f6f8;
+    background: #141c23;
+}
+
+.webnado-controls .control-tabs button[aria-pressed=true]::after {
+    content: '';
+    position: absolute;
+    height: 2px;
+    background: var(--accent);
+    left: 18px;
+    right: 18px;
+    bottom: -1px;
+}
+
+.webnado-controls > .lil-children {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #3a4854 #0c1014;
+}
+
+.webnado-controls .lil-title {
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-size: 10px;
+}
+
+.webnado-controls .lil-gui .lil-title {
+    padding-inline: 12px;
+    height: 32px;
+    border-top: 1px solid var(--line);
+}
+
+.webnado-controls .lil-gui .lil-title::before {
+    margin-right: 7px;
+    color: var(--muted);
+}
+
+.webnado-controls .lil-gui .lil-children {
+    border-left: none;
+    margin-left: 0;
+    padding-left: 0;
+}
+
+.webnado-controls .lil-controller {
+    margin: 0;
+    padding: 6px 14px;
+    gap: 10px;
+}
+
+.webnado-controls .lil-controller > .lil-name {
+    white-space: normal;
+    min-width: 0;
+    width: var(--name-width);
+    line-height: 1.4;
+    color: #b6c2ca;
+}
+
+.webnado-controls .lil-controller .lil-widget {
+    min-width: 0;
+}
+
+.webnado-controls .lil-controller input {
+    border-radius: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.webnado-controls .lil-controller.lil-option,
+.webnado-controls .lil-controller.lil-string {
+    display: block;
+}
+
+.webnado-controls .lil-controller.lil-option > .lil-name,
+.webnado-controls .lil-controller.lil-string > .lil-name {
+    width: auto;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.webnado-controls .lil-controller.lil-option .lil-display {
+    width: 100%;
+    border: 1px solid #34414c;
+    padding-left: 9px;
+}
+
+.webnado-controls .lil-controller.lil-option select {
+    height: 100%;
+}
+
+.webnado-controls .lil-controller.lil-option option {
+    background: #111820;
+    color: #e6ecef;
+}
+
+.webnado-controls .lil-controller.lil-string input {
+    padding-inline: 9px;
+    border: 1px solid var(--line);
+}
+
+.webnado-controls .lil-controller.lil-number .lil-slider {
+    position: relative;
+    height: 28px;
+    overflow: visible;
+    border-radius: 0;
+    background: transparent;
+}
+
+.webnado-controls .lil-controller.lil-number .lil-slider::before {
+    content: '';
+    position: absolute;
+    inset: 12px 0;
+    background: #303b45;
+}
+
+.webnado-controls .lil-controller.lil-number .lil-fill {
+    height: 4px;
+    top: 12px;
+    background: #7799a6;
+    position: relative;
+}
+
+.webnado-controls .lil-controller.lil-number .lil-fill::after {
+    content: '';
+    position: absolute;
+    width: 2px;
+    height: 12px;
+    background: #d2e7ed;
+    right: -2px;
+    top: -4px;
+}
+
+.webnado-controls .lil-controller.lil-number.lil-has-slider input {
+    width: 62px;
+    min-width: 62px;
+    margin-left: 10px;
+    text-align: right;
+    padding-right: 7px;
+    border-bottom: 1px solid #34414c;
+    background: #111820;
+}
+
+.webnado-controls .lil-controller.lil-boolean input {
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border: 1px solid #526371;
+    background: transparent;
+    cursor: pointer;
+}
+
+.webnado-controls .lil-controller.lil-boolean input:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 3px #0c1014;
+}
+
+.webnado-controls .lil-controller.lil-boolean input:checked::before {
+    content: none;
+}
+
+.webnado-controls .lil-controller.lil-function button {
+    border: 1px solid #3c4b57;
+    border-radius: 0;
+    min-height: 32px;
+    padding: 6px 10px;
+    background: transparent;
+    font-size: 11px;
+    letter-spacing: 0.025em;
+}
+
+.webnado-controls .lil-controller.lil-function button:hover {
+    background: #202c35;
+    border-color: #88adbd;
+}
+
+.webnado-controls .lil-controller.control-primary {
+    margin-block: 5px;
+}
+
+.webnado-controls .lil-controller.control-primary button {
+    background: #dce8ed;
+    border-color: #dce8ed;
+    color: #10171c;
+    font-weight: 600;
+}
+
+.webnado-controls .lil-controller.control-primary button:hover {
+    background: #fff;
+    color: #10171c;
+}
+
+.webnado-controls .lil-controller.lil-disabled {
+    opacity: 0.7;
+}
+
+.webnado-controls .control-help {
+    display: none;
+    margin: 8px 18px 12px;
+    color: #9eafb9;
+    font: 11px/1.6 var(--font-family);
+    user-select: text;
+}
+
+.webnado-controls.show-guidance .control-help {
+    display: block;
+}
+
+.webnado-controls .control-help[role=status] {
+    display: block;
+    padding-left: 9px;
+    border-left: 1px solid #637f8d;
+    font: 10px/1.6 var(--font-family-mono);
+}
+
+.webnado-controls button:focus-visible,
+.webnado-controls input:focus-visible,
+.webnado-controls select:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+
+.webnado-controls.lil-closed .control-tabs {
+    display: none;
+}
+
+.weather-source-panel {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    padding: 12px;
+    border: 1px solid #34414c;
+    background: #0c1014f2;
+    color: #dce8ed;
+    font: 10px/1.5 Consolas, monospace;
+    z-index: 2;
+}
+
+@media (max-width: 480px) {
+    .lil-gui.webnado-controls {
+        --width: 100vw !important;
+    }
+    .webnado-controls .lil-controller {
+        padding-inline: 14px;
+    }
+    .webnado-controls .lil-controller input {
+        font-size: 16px;
+    }
+}
+
+.webnado-controls .control-help:empty {
+    display: none;
+}

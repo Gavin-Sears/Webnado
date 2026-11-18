@@ -17,14 +17,34 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        id: pages
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: npm ci
       - run: npm run build
+        env:
+          GITHUB_ACTIONS_BASE: ${{ steps.pages.outputs.base_path }}/
+          VITE_WEATHER_API_URL: ${{ vars.VITE_WEATHER_API_URL }}
+      - uses: actions/cache@v4
+        id: weather
+        with:
+          path: tools/weather/data
+          key: weather-v1-${{ hashFiles('tools/weather/prepare.py', 'tools/weather/export_hrrr.py', 'tools/weather/pack_hrrr.py', 'tools/weather/cases.json', 'tools/weather/requirements.txt') }}
+      - if: steps.weather.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y libeccodes0
+          pip install -r tools/weather/requirements.txt
+          python tools/weather/prepare.py --output tools/weather/data
+      - run: cp -R tools/weather/data dist/weather
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -34,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}$
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4

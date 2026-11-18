@@ -4,6 +4,7 @@ import * as renderer from '../renderer';
 import * as shaders from '../shaders/shaders';
 import { Stage } from '../stage/stage';
 import { fillTestVolume } from './test_volume';
+import { help } from '../ui/help';
 import blueNoiseUrl from '../assets/blue_noise_64.png';
 
 // Draws the clouds in fields.thermo over the Three.js scene. Each frame, draw() runs gis.render(camera),
@@ -21,28 +22,12 @@ export interface Quality {
     shadowSteps: number;
 }
 
-// Pick one with ?quality=low, medium or high. Otherwise platformQuality() picks.
+// Override the medium default with ?quality=low, medium or high.
 export const qualityPresets: Record<string, Quality> = {
     low: { resolutionScale: 0.35, stepCells: 2, maxSteps: 96, shadowSteps: 4 },
     medium: { resolutionScale: 0.5, stepCells: 1, maxSteps: 192, shadowSteps: 6 },
     high: { resolutionScale: 0.75, stepCells: 0.75, maxSteps: 384, shadowSteps: 8 }
 };
-
-// Quality presets for each GPU vendor
-function platformQuality(): string {
-    if (/Android|iPhone|iPad/i.test(navigator.userAgent)) {
-        return 'low';
-    }
-    switch (renderer.device.adapterInfo.vendor) {
-        case 'nvidia':
-        case 'amd':
-            return 'high';
-        case 'apple':
-            return 'medium';
-        default:
-            return 'low';   // intel, mobile GPUs, and anything unknown
-    }
-}
 
 // The numbers match the cases in debugMarch() (raymarch.fs.wgsl)
 const DEBUG_VIEWS: Record<string, number> = {
@@ -145,6 +130,9 @@ export class VolumetricRenderer extends renderer.Renderer {
     private historyViews: GPUTextureView[] = [];
     private historyIndex = 0;
     private historyValid = false;
+    private historyResetVersion = -1;
+    private historyWindowEast = 0;
+    private historyWindowNorth = 0;
     private temporalBindGroups: GPUBindGroup[] = [];
 
     constructor(stage: Stage) {
@@ -152,7 +140,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         const device = renderer.device;
 
         const requested = new URLSearchParams(window.location.search).get('quality') ?? '';
-        this.qualityName = Object.hasOwn(qualityPresets, requested) ? requested : platformQuality();
+        this.qualityName = Object.hasOwn(qualityPresets, requested) ? requested : 'medium';
         this.quality = { ...qualityPresets[this.qualityName] };
 
         const vertex = { module: device.createShaderModule({ label: "fullscreen vert shader", code: shaders.fullscreenVertSrc }) };
@@ -246,7 +234,7 @@ export class VolumetricRenderer extends renderer.Renderer {
         }
     }
 
-    buildGui(gui: GUI) {
+    buildGui(gui: GUI, inspection?: GUI) {
         const folder = gui.addFolder('Raymarcher');
 
         const quality = folder.addFolder('Quality');
@@ -284,13 +272,41 @@ export class VolumetricRenderer extends renderer.Renderer {
         scattering.add(this.multipleScattering, 'contribution', 0, 1, 0.01);
         scattering.add(this.multipleScattering, 'eccentricity', 0, 1, 0.01);
 
-        const debug = folder.addFolder('Debug');
-        debug.add({ focus: () => this.focusRotation() }, 'focus').name('Look at near-ground rotation');
-        debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Look at rotation under cloud');
-        const view = debug.add(this, 'debugView', Object.keys(DEBUG_VIEWS)).name('view');
+        const debug = (inspection ?? folder).addFolder('Diagnostic view');
+        debug.add({ focus: () => this.focusRotation() }, 'focus').name('Focus rotation');
+        debug.add({ focus: () => this.focusRotation(true) }, 'focus').name('Focus under cloud');
+        const view = debug.add(this, 'debugView', {
+            'Cloud rendering': 'off',
+            'Cloud water': 'density',
+            'Temperature anomaly': 'temperature',
+            'Air velocity': 'velocity',
+            'Vorticity magnitude': 'vorticity',
+            'Collision obstacles': 'obstacles',
+            'Occupied bricks': 'bricks',
+            'Dust density': 'dust density',
+            'Dust velocity': 'dust velocity',
+            'Vertical rotation': 'vertical rotation',
+            'Swirling strength': 'swirling strength'
+        }).name('Show');
+        const explanation = help(debug, '');
         const boost = debug.add(this, 'debugBoost').name('boost faint cloud');
         const scale = debug.add(this, 'debugScale', 0, 1);
+        const explanations: Record<string, string> = {
+            off: 'Cloud water rendered with lighting. Clear air can contain wind and rotation without visible cloud.',
+            density: 'Cloud liquid water in g/kg. Boost reveals faint cloud; it does not create cloud.',
+            temperature: 'Potential-temperature anomaly relative to the surrounding reference atmosphere: orange is warmer, blue is colder.',
+            velocity: 'Air velocity components encoded as color. A uniform color can represent a steady background wind.',
+            vorticity: 'Magnitude of local rotation, including horizontal rolls and shear. Bright regions are not necessarily tornadoes.',
+            obstacles: 'Voxelized solids used for collisions. The ground and buildings should match the scene.',
+            bricks: 'Occupied regions used to skip empty space during cloud rendering.',
+            'dust density': 'Grid-based dust mass per volume. The separate dots are visualization tracers.',
+            'dust velocity': 'Velocity of the dust fluid, including drag from air. It can differ from air velocity.',
+            'vertical rotation': 'Signed rotation about the vertical axis. This isolates vertical spin from horizontal rolls.',
+            'swirling strength': 'Local swirling strength filters out pure shear. Look for a compact, persistent column near the floor.'
+        };
+        help(debug, 'Focus buttons work once storm tracking detects rotation. Drag the scene to look around; WASD moves, Q/E moves vertically, Shift moves faster.');
         const showScale = () => {
+            explanation.textContent = explanations[this.debugView];
             const name = this.debugView === 'density' && this.debugBoost ? 'densityBoosted' : this.debugView;
             const preset = DEBUG_SCALES[name];
             boost.show(this.debugView === 'density');
@@ -488,18 +504,23 @@ export class VolumetricRenderer extends renderer.Renderer {
         gis.render(camera); // Three submits this itself
         this.writeParams();
 
-        const useTemporal = this.temporal.enabled && this.debugView === 'off';
-        if (!useTemporal) {
-            this.historyValid = false;
-        }
-        this.writeTemporalParams();
-
         const encoder = device.createCommandEncoder({ label: "frame" });
 
-        solver.step(encoder);
+        const advanced = solver.step(encoder);
+        const useTemporal = this.temporal.enabled && this.debugView === 'off';
+        // A reset or moving window breaks the previous frame's world-space correspondence.
+        if (!useTemporal || solver.resetVersion !== this.historyResetVersion
+            || solver.storm.windowEast !== this.historyWindowEast
+            || solver.storm.windowNorth !== this.historyWindowNorth) {
+            this.historyValid = false;
+        }
+        this.historyResetVersion = solver.resetVersion;
+        this.historyWindowEast = solver.storm.windowEast;
+        this.historyWindowNorth = solver.storm.windowNorth;
+        this.writeTemporalParams();
         this.updateBindGroups();
         // Tracers follow the projected dust field; the solver owns momentum exchange.
-        debris.step(encoder, solver.paused ? 0 : solver.dt, solver.resetVersion);
+        debris.step(encoder, advanced ? solver.dt : 0, solver.resetVersion);
 
         // After the solver, so the bricks match the thermo being drawn
         if (this.brickSkipping || this.debugView === 'bricks') {

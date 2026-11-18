@@ -87,9 +87,6 @@ export class FluidSolver {
     private readonly divergence = createVolume('divergence', 'r32float');
     private readonly openBits = createVolume('open neighbor bits', 'r32uint');
     private readonly atmosphericForce = createVolume('atmospheric forces', constants.velocityFormat);
-    private readonly originalThermo = constants.preciseScalars
-        ? createVolume('thermodynamics before advection', constants.scalarFormat) : undefined;
-    private readonly originalThermoView = this.originalThermo?.createView();
 
     private readonly divergenceView = this.divergence.createView();
     private readonly openBitsView = this.openBits.createView();
@@ -205,9 +202,10 @@ export class FluidSolver {
     }
 
     // Encode once per frame before raymarching; the renderer submits the encoder.
-    step(encoder: GPUCommandEncoder) {
-        if (this.paused && !this.resetRequested) {
-            return;
+    step(encoder: GPUCommandEncoder): boolean {
+        // Apply tracking before advancing again, independent of readback or rendering speed.
+        if ((this.paused || this.storm.waitingForTracking) && !this.resetRequested) {
+            return false;
         }
         if (this.dust.enabled) {
             this.fields.enableDustFields();
@@ -217,7 +215,7 @@ export class FluidSolver {
             if (this.storm.elapsed >= horizon && !this.resetRequested) {
                 this.paused = true;
                 this.storm.phase = 'End of available weather';
-                return;
+                return false;
             }
             this.weather.writeSpatialTime(this.resetRequested ? 0 : this.storm.elapsed);
             this.confinement = 0;
@@ -241,7 +239,7 @@ export class FluidSolver {
             this.resetRequested = false;
         }
         if (this.paused) {
-            return;
+            return false;
         }
         const highOrder = this.storm.enabled && this.storm.highOrder && !this.thermalRequested;
         device.queue.writeBuffer(this.parameters, 0, new Float32Array([
@@ -266,7 +264,7 @@ export class FluidSolver {
             if (!this.weather.moveSpatialWindow(east, north)) {
                 this.paused = true;
                 this.storm.phase = 'End of extracted weather region';
-                return;
+                return false;
             }
         }
         this.storm.write(this.dt);
@@ -320,7 +318,8 @@ export class FluidSolver {
             );
             encoder.copyTextureToTexture(
                 { texture: this.fields.thermo.textures[this.fields.thermo.index] },
-                { texture: this.originalThermo ?? this.fields.vorticity.textures[1 - this.fields.vorticity.index] }, size
+                // The inactive energy buffer is free until the next simulation step.
+                { texture: this.fields.turbulence.textures[1 - this.fields.turbulence.index] }, size
             );
         }
         this.dispatch(encoder, 'advect');
@@ -345,6 +344,7 @@ export class FluidSolver {
             this.checkDivergence(encoder);
             void this.dust.checkDivergence(encoder)?.catch(console.error);
         }
+        return true;
     }
 
     addThermal() {
@@ -554,7 +554,7 @@ export class FluidSolver {
             4: { buffer: this.weather.atmosphereBuffer },
             5: this.fields.velocity.write,
             6: this.fields.thermo.write,
-            7: name === 'correctAdvection' ? this.originalThermoView ?? this.fields.vorticity.write : this.fields.vorticity.read,
+            7: name === 'correctAdvection' ? this.fields.turbulence.write : this.fields.vorticity.read,
             8: this.fields.vorticity.write,
             9: this.pressure.read,
             10: this.divergenceView,
@@ -624,7 +624,6 @@ export class FluidSolver {
         this.divergence.destroy();
         this.openBits.destroy();
         this.atmosphericForce.destroy();
-        this.originalThermo?.destroy();
         this.divergenceReadback?.destroy();
     }
 }
