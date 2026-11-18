@@ -95,7 +95,8 @@ export class DustFluid {
             cached = {
                 module: device.createShaderModule({
                     label: 'two-fluid dust dynamics',
-                    code: processShaderRaw([commonSource.replaceAll('${velocityFormat}', 'rgba16float'),
+                    code: processShaderRaw([commonSource.replaceAll('${velocityFormat}', 'rgba16float')
+                        .replace('override dustPhase: bool = false;', 'const dustPhase = true;'),
                         transportSource, projectionSource, dustSource].join('\n'))
                 }),
                 pipelines: {}
@@ -105,7 +106,7 @@ export class DustFluid {
         const pipeline = cached.pipelines[name] ??= device.createComputePipeline({
             label: `dust ${name}`,
             layout: 'auto',
-            compute: { module: cached.module, entryPoint: name, constants: { dustPhase: 1 } }
+            compute: { module: cached.module, entryPoint: name }
         });
         return this.kernels[name] = { pipeline, groups: new Map() };
     }
